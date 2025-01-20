@@ -1,17 +1,8 @@
 //
-// Copyright 2023 New Vector Ltd
+// Copyright 2023, 2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import XCTest
@@ -21,21 +12,20 @@ extension XCUIApplication {
         let getStartedButton = buttons[A11yIdentifiers.authenticationStartScreen.signIn]
         
         XCTAssertTrue(getStartedButton.waitForExistence(timeout: 10.0))
-        getStartedButton.tap()
+        getStartedButton.tapCenter()
         
-        // Get started is network bound, wait for the change homeserver button for longer
         let changeHomeserverButton = buttons[A11yIdentifiers.serverConfirmationScreen.changeServer]
-        XCTAssertTrue(changeHomeserverButton.waitForExistence(timeout: 30.0))
-        changeHomeserverButton.tap()
+        XCTAssertTrue(changeHomeserverButton.waitForExistence(timeout: 10.0))
+        changeHomeserverButton.tapCenter()
         
         let homeserverTextField = textFields[A11yIdentifiers.changeServerScreen.server]
         XCTAssertTrue(homeserverTextField.waitForExistence(timeout: 10.0))
         
-        homeserverTextField.clearAndTypeText(homeserver)
+        homeserverTextField.clearAndTypeText(homeserver, app: self)
         
         let confirmButton = buttons[A11yIdentifiers.changeServerScreen.continue]
         XCTAssertTrue(confirmButton.waitForExistence(timeout: 10.0))
-        confirmButton.tap()
+        confirmButton.tapCenter()
         
         // Wait for server confirmation to finish
         let doesNotExistPredicate = NSPredicate(format: "exists == 0")
@@ -44,23 +34,23 @@ extension XCUIApplication {
         
         let continueButton = buttons[A11yIdentifiers.serverConfirmationScreen.continue]
         XCTAssertTrue(continueButton.waitForExistence(timeout: 30.0))
-        continueButton.tap()
+        continueButton.tapCenter()
         
         let usernameTextField = textFields[A11yIdentifiers.loginScreen.emailUsername]
         XCTAssertTrue(usernameTextField.waitForExistence(timeout: 10.0))
         
-        usernameTextField.clearAndTypeText(username)
+        usernameTextField.clearAndTypeText(username, app: self)
         
         let passwordTextField = secureTextFields[A11yIdentifiers.loginScreen.password]
         XCTAssertTrue(passwordTextField.waitForExistence(timeout: 10.0))
         
-        passwordTextField.clearAndTypeText(password)
+        passwordTextField.clearAndTypeText(password, app: self)
         
         let nextButton = buttons[A11yIdentifiers.loginScreen.continue]
         XCTAssertTrue(nextButton.waitForExistence(timeout: 10.0))
         XCTAssertTrue(nextButton.isEnabled)
         
-        nextButton.tap()
+        nextButton.tapCenter()
         
         // Wait for login to finish
         currentTestCase.expectation(for: doesNotExistPredicate, evaluatedWith: usernameTextField)
@@ -72,16 +62,7 @@ extension XCUIApplication {
             // Tapping the sheet button while animating upwards fails. Wait for it to settle
             sleep(1)
             
-            savePasswordButton.tap()
-        }
-        
-        // Migration screen may be shown as an overlay.
-        // if that pops up soon enough, we just let that happen and wait
-        let message = staticTexts[A11yIdentifiers.migrationScreen.message]
-        
-        if message.waitForExistence(timeout: 10.0) {
-            currentTestCase.expectation(for: doesNotExistPredicate, evaluatedWith: message)
-            currentTestCase.waitForExpectations(timeout: 300.0)
+            savePasswordButton.tapCenter()
         }
                 
         // Wait for the home screen to become visible.
@@ -98,17 +79,17 @@ extension XCUIApplication {
         let profileButton = buttons[A11yIdentifiers.homeScreen.userAvatar]
                 
         // `Failed to scroll to visible (by AX action) Button` https://stackoverflow.com/a/33534187/730924
-        profileButton.forceTap()
+        profileButton.tapCenter()
         
         // Logout
         let logoutButton = buttons[A11yIdentifiers.settingsScreen.logout]
         XCTAssertTrue(logoutButton.waitForExistence(timeout: 10.0))
-        logoutButton.tap()
+        logoutButton.tapCenter()
         
         // Confirm logout
         let alertLogoutButton = alerts.firstMatch.buttons["Sign out"]
         XCTAssertTrue(alertLogoutButton.waitForExistence(timeout: 10.0))
-        alertLogoutButton.tap()
+        alertLogoutButton.tapCenter()
         
         // Check that we're back on the login screen
         let getStartedButton = buttons[A11yIdentifiers.authenticationStartScreen.signIn]

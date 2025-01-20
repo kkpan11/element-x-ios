@@ -1,22 +1,13 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
 
-extension URL: ExpressibleByStringLiteral {
+extension URL: @retroactive ExpressibleByStringLiteral {
     public init(stringLiteral value: StaticString) {
         guard let url = URL(string: "\(value)") else {
             fatalError("The static string used to create this URL is invalid")
@@ -68,6 +59,35 @@ extension URL: ExpressibleByStringLiteral {
         return url
     }
     
+    /// The base directory where all application support data is stored.
+    static var sessionCachesBaseDirectory: URL {
+        let url = appGroupContainerDirectory
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent(InfoPlistReader.main.baseBundleIdentifier, isDirectory: true)
+            .appendingPathComponent("Sessions", isDirectory: true)
+
+        try? FileManager.default.createDirectoryIfNeeded(at: url)
+        
+        // Caches are excluded from backups automatically.
+        // https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/FileSystemOverview/FileSystemOverview.html
+
+        return url
+    }
+    
+    /// The app group temporary directory
+    static var appGroupTemporaryDirectory: URL {
+        let url = appGroupContainerDirectory
+            .appendingPathComponent("tmp", isDirectory: true)
+
+        try? FileManager.default.createDirectoryIfNeeded(at: url)
+        
+        // Temporary files are excluded from backups automatically.
+        // https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/FileSystemOverview/FileSystemOverview.html
+
+        return url
+    }
+    
     var globalProxy: String? {
         if let proxySettingsUnmanaged = CFNetworkCopySystemProxySettings() {
             let proxySettings = proxySettingsUnmanaged.takeRetainedValue()
@@ -80,4 +100,13 @@ extension URL: ExpressibleByStringLiteral {
         }
         return nil
     }
+    
+    // MARK: Mocks
+    
+    static var mockMXCAudio: URL { "mxc://matrix.org/1234567890AuDiO" }
+    static var mockMXCFile: URL { "mxc://matrix.org/1234567890FiLe" }
+    static var mockMXCImage: URL { "mxc://matrix.org/1234567890ImAgE" }
+    static var mockMXCVideo: URL { "mxc://matrix.org/1234567890ViDeO" }
+    static var mockMXCAvatar: URL { "mxc://matrix.org/1234567890AvAtAr" }
+    static var mockMXCUserAvatar: URL { "mxc://matrix.org/1234567890AvAtArUsEr" }
 }

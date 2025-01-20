@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import XCTest
@@ -66,13 +57,13 @@ class AppLockUITests: XCTestCase {
         await client.waitForApp()
         
         // Blank form representing an unlocked app.
-        try await app.assertScreenshot(.appLockFlow, step: Step.unlocked)
+        try await app.assertScreenshot(.appLockFlow, step: Step.unlocked, delay: .seconds(0.5))
         
         // When backgrounding the app.
         try client.send(.notification(name: UIApplication.didEnterBackgroundNotification))
         
         // Then the app should remain unlocked.
-        try await app.assertScreenshot(.appLockFlow, step: Step.unlocked)
+        try await app.assertScreenshot(.appLockFlow, step: Step.unlocked, delay: .seconds(0.5))
         
         // When foregrounding the app.
         try client.send(.notification(name: UIApplication.willEnterForegroundNotification))
@@ -80,7 +71,7 @@ class AppLockUITests: XCTestCase {
         try client.send(.notification(name: UIApplication.didBecomeActiveNotification))
         
         // Then the app should still remain unlocked.
-        try await app.assertScreenshot(.appLockFlow, step: Step.unlocked)
+        try await app.assertScreenshot(.appLockFlow, step: Step.unlocked, delay: .seconds(0.5))
     }
     
     func testWrongPIN() async throws {
@@ -89,7 +80,7 @@ class AppLockUITests: XCTestCase {
         app = Application.launch(.appLockFlow)
         await client.waitForApp()
         
-        try await app.assertScreenshot(.appLockFlow, step: Step.unlocked)
+        try await app.assertScreenshot(.appLockFlow, step: Step.unlocked, delay: .seconds(0.5))
         try client.send(.notification(name: UIApplication.didEnterBackgroundNotification))
         try await Task.sleep(for: .milliseconds(500)) // Don't overwrite the previous signal immediately.
         
@@ -97,22 +88,22 @@ class AppLockUITests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(100))
         try client.send(.notification(name: UIApplication.didBecomeActiveNotification))
         
-        try await app.assertScreenshot(.appLockFlow, step: Step.lockScreen)
+        try await app.assertScreenshot(.appLockFlow, step: Step.lockScreen, delay: .seconds(0.5))
         
         // When entering an incorrect PIN
         enterWrongPIN()
         
         // Then the app should remain locked with a warning.
-        try await app.assertScreenshot(.appLockFlow, step: Step.failedUnlock)
+        try await app.assertScreenshot(.appLockFlow, step: Step.failedUnlock, delay: .seconds(0.5))
         
         // When entering it incorrectly twice more.
         enterWrongPIN()
         enterWrongPIN()
         
         // Then then the app should sign the user out.
-        try await app.assertScreenshot(.appLockFlow, step: Step.logoutAlert)
+        try await app.assertScreenshot(.appLockFlow, step: Step.logoutAlert, delay: .seconds(0.5))
         app.alerts.element.buttons[A11yIdentifiers.alertInfo.primaryButton].tap()
-        try await app.assertScreenshot(.appLockFlow, step: Step.forcedLogout)
+        try await app.assertScreenshot(.appLockFlow, step: Step.forcedLogout, delay: .seconds(0.5))
     }
     
     func testResignActive() async throws {

@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
@@ -26,6 +17,10 @@ private class WeakSessionVerificationControllerProxy: SessionVerificationControl
     }
     
     // MARK: - SessionVerificationControllerDelegate
+    
+    func didReceiveVerificationRequest(details: MatrixRustSDK.SessionVerificationRequestDetails) {
+        proxy?.didReceiveVerificationRequest(details: details)
+    }
     
     func didReceiveVerificationData(data: MatrixRustSDK.SessionVerificationData) {
         switch data {
@@ -63,86 +58,142 @@ class SessionVerificationControllerProxy: SessionVerificationControllerProxyProt
     
     init(sessionVerificationController: SessionVerificationController) {
         self.sessionVerificationController = sessionVerificationController
+        sessionVerificationController.setDelegate(delegate: WeakSessionVerificationControllerProxy(proxy: self))
     }
     
     deinit {
         sessionVerificationController.setDelegate(delegate: nil)
     }
     
-    let callbacks = PassthroughSubject<SessionVerificationControllerProxyCallback, Never>()
+    let actions = PassthroughSubject<SessionVerificationControllerProxyAction, Never>()
+    
+    func acknowledgeVerificationRequest(details: SessionVerificationRequestDetails) async -> Result<Void, SessionVerificationControllerProxyError> {
+        MXLog.info("Acknowledging verification request")
+        
+        do {
+            try await sessionVerificationController.acknowledgeVerificationRequest(senderId: details.senderID, flowId: details.flowID)
+            return .success(())
+        } catch {
+            MXLog.error("Failed requesting session verification with error: \(error)")
+            return .failure(.failedAcknowledgingVerificationRequest)
+        }
+    }
+    
+    func acceptVerificationRequest() async -> Result<Void, SessionVerificationControllerProxyError> {
+        MXLog.info("Accepting verification request")
+        
+        do {
+            try await sessionVerificationController.acceptVerificationRequest()
+            return .success(())
+        } catch {
+            MXLog.error("Failed requesting session verification with error: \(error)")
+            return .failure(.failedAcceptingVerificationRequest)
+        }
+    }
         
     func requestVerification() async -> Result<Void, SessionVerificationControllerProxyError> {
-        sessionVerificationController.setDelegate(delegate: WeakSessionVerificationControllerProxy(proxy: self))
+        MXLog.info("Requesting session verification")
         
         do {
             try await sessionVerificationController.requestVerification()
             return .success(())
         } catch {
+            MXLog.error("Failed requesting session verification with error: \(error)")
             return .failure(.failedRequestingVerification)
         }
     }
     
     func startSasVerification() async -> Result<Void, SessionVerificationControllerProxyError> {
+        MXLog.info("Starting SAS verification")
+        
         do {
             try await sessionVerificationController.startSasVerification()
             return .success(())
         } catch {
+            MXLog.error("Failed starting SAS verification with error: \(error)")
             return .failure(.failedStartingSasVerification)
         }
     }
     
     func approveVerification() async -> Result<Void, SessionVerificationControllerProxyError> {
+        MXLog.info("Approving verification")
+        
         do {
             try await sessionVerificationController.approveVerification()
             return .success(())
         } catch {
+            MXLog.error("Failed approving verification with error: \(error)")
             return .failure(.failedApprovingVerification)
         }
     }
     
     func declineVerification() async -> Result<Void, SessionVerificationControllerProxyError> {
+        MXLog.info("Declining verification")
+        
         do {
             try await sessionVerificationController.declineVerification()
             return .success(())
         } catch {
+            MXLog.error("Failed declining verification with error: \(error)")
             return .failure(.failedDecliningVerification)
         }
     }
     
     func cancelVerification() async -> Result<Void, SessionVerificationControllerProxyError> {
+        MXLog.info("Cancelling verification")
+        
         do {
             try await sessionVerificationController.cancelVerification()
             return .success(())
         } catch {
+            MXLog.error("Failed cancelling verification with error: \(error)")
             return .failure(.failedCancellingVerification)
         }
     }
     
     // MARK: - Private
     
+    fileprivate func didReceiveVerificationRequest(details: MatrixRustSDK.SessionVerificationRequestDetails) {
+        MXLog.info("Received verification request \(details)")
+        
+        let details = SessionVerificationRequestDetails(senderID: details.senderId,
+                                                        flowID: details.flowId,
+                                                        deviceID: details.deviceId,
+                                                        displayName: details.displayName,
+                                                        firstSeenDate: Date(timeIntervalSince1970: TimeInterval(details.firstSeenTimestamp / 1000)))
+        
+        actions.send(.receivedVerificationRequest(details: details))
+    }
+    
     fileprivate func didAcceptVerificationRequest() {
-        callbacks.send(.acceptedVerificationRequest)
+        MXLog.info("Accepted verification request")
+        
+        actions.send(.acceptedVerificationRequest)
     }
     
     fileprivate func didStartSasVerification() {
-        callbacks.send(.startedSasVerification)
+        MXLog.info("Started SAS verification")
+        
+        actions.send(.startedSasVerification)
     }
     
     fileprivate func didReceiveData(_ data: [MatrixRustSDK.SessionVerificationEmoji]) {
-        callbacks.send(.receivedVerificationData(data.map { emoji in
+        MXLog.info("Received verification data")
+        
+        actions.send(.receivedVerificationData(data.map { emoji in
             SessionVerificationEmoji(symbol: emoji.symbol(), description: emoji.description())
         }))
     }
     
     fileprivate func didFail() {
-        callbacks.send(.failed)
+        actions.send(.failed)
     }
     
     fileprivate func didFinish() {
-        callbacks.send(.finished)
+        actions.send(.finished)
     }
     
     fileprivate func didCancel() {
-        callbacks.send(.cancelled)
+        actions.send(.cancelled)
     }
 }

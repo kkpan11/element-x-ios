@@ -1,17 +1,8 @@
 //
-// Copyright 2023 New Vector Ltd
+// Copyright 2023, 2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import XCTest
@@ -171,7 +162,7 @@ class RoomFlowCoordinatorTests: XCTestCase {
         
         // "Join" the room
         clientProxy.roomForIdentifierClosure = { _ in
-            RoomProxyMock(.init())
+            .joined(JoinedRoomProxyMock(.init()))
         }
         
         try await process(route: .room(roomID: "InvitedRoomID", via: []))
@@ -201,7 +192,7 @@ class RoomFlowCoordinatorTests: XCTestCase {
         
         // "Join" the room
         clientProxy.roomForIdentifierClosure = { _ in
-            RoomProxyMock(.init())
+            .joined(JoinedRoomProxyMock(.init()))
         }
         
         try await process(route: .room(roomID: "InvitedRoomID", via: []))
@@ -225,6 +216,56 @@ class RoomFlowCoordinatorTests: XCTestCase {
         XCTAssert(navigationStackCoordinator.rootCoordinator is RoomScreenCoordinator)
         XCTAssertEqual(navigationStackCoordinator.stackCoordinators.count, 1)
         XCTAssert(navigationStackCoordinator.stackCoordinators.first is RoomScreenCoordinator)
+    }
+    
+    func testShareMediaRoute() async throws {
+        await setupRoomFlowCoordinator()
+        
+        try await process(route: .room(roomID: "1", via: []))
+        XCTAssert(navigationStackCoordinator.rootCoordinator is RoomScreenCoordinator)
+        XCTAssertEqual(navigationStackCoordinator.stackCoordinators.count, 0)
+        
+        let sharePayload: ShareExtensionPayload = .mediaFile(roomID: "1", mediaFile: .init(url: .picturesDirectory, suggestedName: nil))
+        try await process(route: .share(sharePayload))
+        
+        XCTAssert(navigationStackCoordinator.rootCoordinator is RoomScreenCoordinator)
+        XCTAssertEqual(navigationStackCoordinator.stackCoordinators.count, 0)
+        
+        XCTAssertTrue((navigationStackCoordinator.sheetCoordinator as? NavigationStackCoordinator)?.rootCoordinator is MediaUploadPreviewScreenCoordinator)
+        
+        try await process(route: .childRoom(roomID: "2", via: []))
+        XCTAssertNil(navigationStackCoordinator.sheetCoordinator)
+        XCTAssertEqual(navigationStackCoordinator.stackCoordinators.count, 1)
+        
+        try await process(route: .share(sharePayload))
+        
+        XCTAssertEqual(navigationStackCoordinator.stackCoordinators.count, 0)
+        XCTAssertTrue((navigationStackCoordinator.sheetCoordinator as? NavigationStackCoordinator)?.rootCoordinator is MediaUploadPreviewScreenCoordinator)
+    }
+    
+    func testShareTextRoute() async throws {
+        await setupRoomFlowCoordinator()
+        
+        try await process(route: .room(roomID: "1", via: []))
+        XCTAssert(navigationStackCoordinator.rootCoordinator is RoomScreenCoordinator)
+        XCTAssertEqual(navigationStackCoordinator.stackCoordinators.count, 0)
+        
+        let sharePayload: ShareExtensionPayload = .text(roomID: "1", text: "Important text")
+        try await process(route: .share(sharePayload))
+        
+        XCTAssert(navigationStackCoordinator.rootCoordinator is RoomScreenCoordinator)
+        XCTAssertEqual(navigationStackCoordinator.stackCoordinators.count, 0)
+        
+        XCTAssertNil(navigationStackCoordinator.sheetCoordinator, "The media upload sheet shouldn't be shown when sharing text.")
+        
+        try await process(route: .childRoom(roomID: "2", via: []))
+        XCTAssertNil(navigationStackCoordinator.sheetCoordinator)
+        XCTAssertEqual(navigationStackCoordinator.stackCoordinators.count, 1)
+        
+        try await process(route: .share(sharePayload))
+        
+        XCTAssertEqual(navigationStackCoordinator.stackCoordinators.count, 0)
+        XCTAssertNil(navigationStackCoordinator.sheetCoordinator, "The media upload sheet shouldn't be shown when sharing text.")
     }
     
     // MARK: - Private
@@ -281,7 +322,7 @@ class RoomFlowCoordinatorTests: XCTestCase {
                                       topic: nil,
                                       avatarURL: nil,
                                       memberCount: 0,
-                                      isHistoryWorldReadable: false,
+                                      isHistoryWorldReadable: nil,
                                       isJoined: false,
                                       isInvited: true,
                                       isPublic: false,
@@ -307,7 +348,8 @@ class RoomFlowCoordinatorTests: XCTestCase {
                                                         isChildFlow: asChildFlow,
                                                         roomTimelineControllerFactory: timelineControllerFactory,
                                                         navigationStackCoordinator: navigationStackCoordinator,
-                                                        emojiProvider: EmojiProvider(),
+                                                        emojiProvider: EmojiProvider(appSettings: ServiceLocator.shared.settings),
+                                                        ongoingCallRoomIDPublisher: .init(.init(nil)),
                                                         appMediator: AppMediatorMock.default,
                                                         appSettings: ServiceLocator.shared.settings,
                                                         analytics: ServiceLocator.shared.analytics,

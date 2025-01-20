@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
@@ -33,6 +24,12 @@ class UserSessionFlowCoordinatorStateMachine {
         /// Showing the settings screen
         case settingsScreen(selectedRoomID: String?)
         
+        /// Showing the recovery key screen.
+        case recoveryKeyScreen(selectedRoomID: String?)
+        
+        /// Showing the encryption reset flow.
+        case encryptionResetFlow(selectedRoomID: String?)
+        
         /// Showing the start chat screen
         case startChatScreen(selectedRoomID: String?)
         
@@ -45,14 +42,18 @@ class UserSessionFlowCoordinatorStateMachine {
         /// Showing the user profile screen. This screen clears the navigation.
         case userProfileScreen
         
+        case shareExtensionRoomList(sharePayload: ShareExtensionPayload)
+        
         /// The selected room ID from the state if available.
         var selectedRoomID: String? {
             switch self {
-            case .initial, .userProfileScreen:
+            case .initial, .userProfileScreen, .shareExtensionRoomList:
                 nil
             case .roomList(let selectedRoomID),
                  .feedbackScreen(let selectedRoomID),
                  .settingsScreen(let selectedRoomID),
+                 .recoveryKeyScreen(let selectedRoomID),
+                 .encryptionResetFlow(let selectedRoomID),
                  .startChatScreen(let selectedRoomID),
                  .logoutConfirmationScreen(let selectedRoomID),
                  .roomDirectorySearchScreen(let selectedRoomID):
@@ -88,12 +89,22 @@ class UserSessionFlowCoordinatorStateMachine {
         /// The feedback screen has been dismissed
         case dismissedFeedbackScreen
         
+        /// Request presentation of the recovery key screen.
+        case showRecoveryKeyScreen
+        /// The recovery key screen has been dismissed.
+        case dismissedRecoveryKeyScreen
+        
+        /// Request presentation of the encryption reset flow.
+        case startEncryptionResetFlow
+        /// The encryption reset flow is complete and has been dismissed.
+        case finishedEncryptionResetFlow
+        
         /// Request the start of the start chat flow
         case showStartChatScreen
         /// Start chat has been dismissed
         case dismissedStartChatScreen
                 
-        /// Logout has been requested and this is the last sesion
+        /// Logout has been requested and this is the last session
         case showLogoutConfirmationScreen
         /// Logout has been cancelled
         case dismissedLogoutConfirmationScreen
@@ -107,6 +118,9 @@ class UserSessionFlowCoordinatorStateMachine {
         case showUserProfileScreen(userID: String)
         /// The user profile screen has been dismissed.
         case dismissedUserProfileScreen
+        
+        case showShareExtensionRoomList(sharePayload: ShareExtensionPayload)
+        case dismissedShareExtensionRoomList
     }
     
     private let stateMachine: StateMachine<State, Event>
@@ -145,6 +159,16 @@ class UserSessionFlowCoordinatorStateMachine {
             case (.feedbackScreen(let selectedRoomID), .dismissedFeedbackScreen):
                 return .roomList(selectedRoomID: selectedRoomID)
                 
+            case (.roomList(let selectedRoomID), .showRecoveryKeyScreen):
+                return .recoveryKeyScreen(selectedRoomID: selectedRoomID)
+            case (.recoveryKeyScreen(let selectedRoomID), .dismissedRecoveryKeyScreen):
+                return .roomList(selectedRoomID: selectedRoomID)
+                
+            case (.roomList(let selectedRoomID), .startEncryptionResetFlow):
+                return .encryptionResetFlow(selectedRoomID: selectedRoomID)
+            case (.encryptionResetFlow(let selectedRoomID), .finishedEncryptionResetFlow):
+                return .roomList(selectedRoomID: selectedRoomID)
+                
             case (.roomList(let selectedRoomID), .showStartChatScreen):
                 return .startChatScreen(selectedRoomID: selectedRoomID)
             case (.startChatScreen(let selectedRoomID), .dismissedStartChatScreen):
@@ -163,6 +187,11 @@ class UserSessionFlowCoordinatorStateMachine {
             case (_, .showUserProfileScreen):
                 return .userProfileScreen
             case (.userProfileScreen, .dismissedUserProfileScreen):
+                return .roomList(selectedRoomID: nil)
+                
+            case (.roomList, .showShareExtensionRoomList(let sharePayload)):
+                return .shareExtensionRoomList(sharePayload: sharePayload)
+            case (.shareExtensionRoomList, .dismissedShareExtensionRoomList):
                 return .roomList(selectedRoomID: nil)
                 
             default:

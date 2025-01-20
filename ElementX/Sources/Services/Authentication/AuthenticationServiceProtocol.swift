@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
@@ -25,7 +16,7 @@ enum AuthenticationFlow {
     case register
 }
 
-enum AuthenticationServiceError: Error {
+enum AuthenticationServiceError: Error, Equatable {
     /// An error occurred during OIDC authentication.
     case oidcError(OIDCError)
     case invalidServer
@@ -33,18 +24,22 @@ enum AuthenticationServiceError: Error {
     case invalidHomeserverAddress
     case invalidWellKnown(String)
     case slidingSyncNotAvailable
+    case loginNotSupported
+    case registrationNotSupported
     case accountDeactivated
     case failedLoggingIn
-    case isOnWaitlist
     case sessionTokenRefreshNotSupported
+    case failedUsingWebCredentials
 }
 
 protocol AuthenticationServiceProtocol {
     /// The currently configured homeserver.
     var homeserver: CurrentValuePublisher<LoginHomeserver, Never> { get }
+    /// The type of flow the service is currently configured with.
+    var flow: AuthenticationFlow { get }
         
     /// Sets up the service for login on the specified homeserver address.
-    func configure(for homeserverAddress: String) async -> Result<Void, AuthenticationServiceError>
+    func configure(for homeserverAddress: String, flow: AuthenticationFlow) async -> Result<Void, AuthenticationServiceError>
     /// Performs login using OIDC for the current homeserver.
     func urlForOIDCLogin() async -> Result<OIDCAuthorizationDataProxy, AuthenticationServiceError>
     /// Asks the SDK to abort an ongoing OIDC login if we didn't get a callback to complete the request with.
@@ -53,6 +48,11 @@ protocol AuthenticationServiceProtocol {
     func loginWithOIDCCallback(_ callbackURL: URL, data: OIDCAuthorizationDataProxy) async -> Result<UserSessionProtocol, AuthenticationServiceError>
     /// Performs a password login using the current homeserver.
     func login(username: String, password: String, initialDeviceName: String?, deviceID: String?) async -> Result<UserSessionProtocol, AuthenticationServiceError>
+    /// Completes registration using the credentials obtained via the helper URL.
+    func completeWebRegistration(using credentials: WebRegistrationCredentials) async -> Result<UserSessionProtocol, AuthenticationServiceError>
+    
+    /// Resets the current configuration requiring `configure(for:flow:)` to be called again.
+    func reset()
 }
 
 // MARK: - OIDC
@@ -79,7 +79,7 @@ struct OIDCAuthorizationDataProxy: Equatable {
     }
 }
 
-extension OidcAuthorizationData: Equatable {
+extension OidcAuthorizationData: @retroactive Equatable {
     public static func == (lhs: MatrixRustSDK.OidcAuthorizationData, rhs: MatrixRustSDK.OidcAuthorizationData) -> Bool {
         lhs.loginUrl() == rhs.loginUrl()
     }

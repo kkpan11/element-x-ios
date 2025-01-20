@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
@@ -38,8 +29,14 @@ enum RoomTimelineControllerError: Error {
 @MainActor
 protocol RoomTimelineControllerProtocol {
     var roomID: String { get }
+    var timelineKind: TimelineKind { get }
     
+    /// The currently known items, use only for setting up the intial state.
     var timelineItems: [RoomTimelineItemProtocol] { get }
+    
+    /// The current pagination state, use only for setting up the intial state
+    var paginationState: PaginationState { get }
+    
     var callbacks: PassthroughSubject<RoomTimelineControllerCallback, Never> { get }
     
     func processItemAppearance(_ itemID: TimelineItemIdentifier) async
@@ -56,34 +53,34 @@ protocol RoomTimelineControllerProtocol {
     
     func sendMessage(_ message: String,
                      html: String?,
-                     inReplyTo itemID: TimelineItemIdentifier?,
+                     inReplyToEventID: String?,
                      intentionalMentions: IntentionalMentions) async
     
-    func edit(_ timelineItemID: TimelineItemIdentifier,
+    func edit(_ eventOrTransactionID: EventOrTransactionId,
               message: String,
               html: String?,
               intentionalMentions: IntentionalMentions) async
     
-    func toggleReaction(_ reaction: String, to itemID: TimelineItemIdentifier) async
+    func editCaption(_ eventOrTransactionID: EventOrTransactionId,
+                     message: String,
+                     html: String?,
+                     intentionalMentions: IntentionalMentions) async
+    
+    func removeCaption(_ eventOrTransactionID: EventOrTransactionId) async
+    
+    func toggleReaction(_ reaction: String, to eventOrTransactionID: EventOrTransactionId) async
 
-    func redact(_ itemID: TimelineItemIdentifier) async
+    func redact(_ eventOrTransactionID: EventOrTransactionId) async
+    
+    func pin(eventID: String) async
+    
+    func unpin(eventID: String) async
     
     func messageEventContent(for itemID: TimelineItemIdentifier) async -> RoomMessageEventContentWithoutRelation?
     
     func debugInfo(for itemID: TimelineItemIdentifier) -> TimelineItemDebugInfo
     
-    func retryDecryption(for sessionID: String) async
+    func sendHandle(for itemID: TimelineItemIdentifier) -> SendHandleProxy?
     
     func eventTimestamp(for itemID: TimelineItemIdentifier) -> Date?
-}
-
-extension RoomTimelineControllerProtocol {
-    func sendMessage(_ message: String,
-                     html: String?,
-                     intentionalMentions: IntentionalMentions) async {
-        await sendMessage(message,
-                          html: html,
-                          inReplyTo: nil,
-                          intentionalMentions: intentionalMentions)
-    }
 }

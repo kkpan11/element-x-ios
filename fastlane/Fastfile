@@ -7,7 +7,7 @@ if File.exist?(enterprise)
 end
 
 before_all do
-  xcversion(version: "15.2")
+  xcversion(version: "16.1")
 
   ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] = "180"
   ENV["FASTLANE_XCODE_LIST_TIMEOUT"] = "180"
@@ -80,21 +80,25 @@ lane :alpha do
 end
 
 lane :unit_tests do |options|
+  reset_simulator = ENV.key?('CI')
+  
   run_tests(
     scheme: "UnitTests",
-    device: 'iPhone 15',
+    device: "iPhone 16 (18.1)",
     ensure_devices_found: true,
     result_bundle: true,
     number_of_retries: 3,
+    reset_simulator: reset_simulator
   )
   
   if !options[:skip_previews]
     run_tests(
       scheme: "PreviewTests",
-      device: 'iPhone 15',
+      device: "iPhone SE (3rd generation) (18.1)",
+      ensure_devices_found: true,
       result_bundle: true,
       number_of_retries: 3,
-      xcargs: '-skipPackagePluginValidation',
+      reset_simulator: reset_simulator
     )
   end
   
@@ -102,19 +106,16 @@ lane :unit_tests do |options|
 end
 
 lane :ui_tests do |options|
-  # Use a fresh simulator state to ensure hardware keyboard isn't attached.
-  reset_simulator_contents()
-  
   create_simulator_if_necessary(
-    name: "iPhone 15 (17.2)",
-    type: "com.apple.CoreSimulator.SimDeviceType.iPhone-15",
-    runtime: "com.apple.CoreSimulator.SimRuntime.iOS-17-2"
+    name: "iPhone-18.1",
+    type: "com.apple.CoreSimulator.SimDeviceType.iPhone-16",
+    runtime: "com.apple.CoreSimulator.SimRuntime.iOS-18-1"
   )
   
   create_simulator_if_necessary(
-    name: "iPad (10th generation)",
+    name: "iPad-18.1",
     type: "com.apple.CoreSimulator.SimDeviceType.iPad-10th-generation",
-    runtime: "com.apple.CoreSimulator.SimRuntime.iOS-17-2"
+    runtime: "com.apple.CoreSimulator.SimRuntime.iOS-18-1"
   )
 
   if options[:test_name]
@@ -123,14 +124,17 @@ lane :ui_tests do |options|
     test_to_run = nil
   end
 
+  reset_simulator = ENV.key?('CI')
+
   run_tests(
     scheme: "UITests",
-    devices: ["iPhone 15", "iPad (10th generation)"],
+    devices: ["iPhone-18.1", "iPad-18.1"],
     ensure_devices_found: true,
     prelaunch_simulator: true,
     result_bundle: true,
     only_testing: test_to_run,
     number_of_retries: 3,
+    reset_simulator: reset_simulator
   )
 end
 
@@ -139,17 +143,19 @@ lane :integration_tests do
   clear_derived_data()
   
   create_simulator_if_necessary(
-    name: "iPhone 15 Pro",
-    type: "com.apple.CoreSimulator.SimDeviceType.iPhone-15-Pro",
-    runtime: "com.apple.CoreSimulator.SimRuntime.iOS-17-2"
+    name: "iPhone-18.1",
+    type: "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+    runtime: "com.apple.CoreSimulator.SimRuntime.iOS-18-1"
   )
+
+  reset_simulator = ENV.key?('CI')
 
   run_tests(
     scheme: "IntegrationTests",
-    devices: ["iPhone 15 Pro"],
+    device: "iPhone-18.1",
     ensure_devices_found: true,
     result_bundle: true,
-    reset_simulator: true
+    reset_simulator: reset_simulator
   )
 end
 
@@ -178,7 +184,7 @@ lane :config_nightly do |options|
 
   release_version = get_version_number(target: "ElementX")
 
-  update_app_icon(caption_text: "#{release_version}(#{build_number})", modulate: "100,20,100")
+  update_app_icon(caption_text: "#{release_version} (#{build_number})", modulate: "100,20,100")
 end
 
 $sentry_retry=0
@@ -411,6 +417,7 @@ private_lane :config_secrets do
   set_xcconfig_value(
     path: './ElementX/SupportingFiles/secrets.xcconfig',
     name: 'MAPLIBRE_API_KEY',
-    value: maplibre_api_key
+    value: maplibre_api_key,
+    mask_value: true
   )
 end

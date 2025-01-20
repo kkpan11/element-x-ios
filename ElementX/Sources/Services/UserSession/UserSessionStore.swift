@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
@@ -20,7 +11,9 @@ import MatrixRustSDK
 
 class UserSessionStore: UserSessionStoreProtocol {
     private let keychainController: KeychainControllerProtocol
-    private let matrixSDKStateKey = "matrix-sdk-state"
+    private let appSettings: AppSettings
+    private let networkMonitor: NetworkMonitorProtocol
+    private let appHooks: AppHooks
     
     /// Whether or not there are sessions in the store.
     var hasSessions: Bool { !keychainController.restorationTokens().isEmpty }
@@ -29,8 +22,14 @@ class UserSessionStore: UserSessionStoreProtocol {
     
     var clientSessionDelegate: ClientSessionDelegate { keychainController }
     
-    init(keychainController: KeychainControllerProtocol) {
+    init(keychainController: KeychainControllerProtocol,
+         appSettings: AppSettings,
+         appHooks: AppHooks,
+         networkMonitor: NetworkMonitorProtocol) {
         self.keychainController = keychainController
+        self.appSettings = appSettings
+        self.appHooks = appHooks
+        self.networkMonitor = networkMonitor
     }
     
     /// Deletes all data stored in the shared container and keychain
@@ -55,23 +54,25 @@ class UserSessionStore: UserSessionStoreProtocol {
             
             // On any restoration failure reset the token and restart
             keychainController.removeRestorationTokenForUsername(credentials.userID)
-            deleteSessionDirectory(for: credentials)
+            credentials.restorationToken.sessionDirectories.delete()
             
             return .failure(error)
         }
     }
     
-    func userSession(for client: Client, sessionDirectory: URL, passphrase: String?) async -> Result<UserSessionProtocol, UserSessionStoreError> {
+    func userSession(for client: ClientProtocol, sessionDirectories: SessionDirectories, passphrase: String?) async -> Result<UserSessionProtocol, UserSessionStoreError> {
         do {
             let session = try client.session()
             let userID = try client.userId()
             let clientProxy = await setupProxyForClient(client)
             
             keychainController.setRestorationToken(RestorationToken(session: session,
-                                                                    sessionDirectory: sessionDirectory,
+                                                                    sessionDirectories: sessionDirectories,
                                                                     passphrase: passphrase,
                                                                     pusherNotificationClientIdentifier: clientProxy.pusherNotificationClientIdentifier),
                                                    forUsername: userID)
+            
+            MXLog.info("Set up session for user \(userID) at: \(sessionDirectories)")
             
             return .success(buildUserSessionWithClient(clientProxy))
         } catch {
@@ -86,7 +87,7 @@ class UserSessionStore: UserSessionStoreProtocol {
         keychainController.removeRestorationTokenForUsername(userID)
         
         if let credentials {
-            deleteSessionDirectory(for: credentials)
+            credentials.restorationToken.sessionDirectories.delete()
         }
     }
     
@@ -95,14 +96,15 @@ class UserSessionStore: UserSessionStoreProtocol {
             MXLog.error("Failed to clearing caches: Credentials missing")
             return
         }
-        deleteCaches(for: credentials)
+        credentials.restorationToken.sessionDirectories.deleteTransientUserData()
     }
     
     // MARK: - Private
     
     private func buildUserSessionWithClient(_ clientProxy: ClientProxyProtocol) -> UserSessionProtocol {
         let mediaProvider = MediaProvider(mediaLoader: clientProxy,
-                                          imageCache: .onlyInMemory)
+                                          imageCache: .onlyInMemory,
+                                          networkMonitor: networkMonitor)
         
         let voiceMessageMediaManager = VoiceMessageMediaManager(mediaProvider: mediaProvider)
         
@@ -116,12 +118,22 @@ class UserSessionStore: UserSessionStoreProtocol {
             MXLog.info("Restoring client with encrypted store.")
         }
         
+        guard credentials.restorationToken.sessionDirectories.isNonTransientUserDataValid() else {
+            MXLog.error("Failed restoring login, missing non-transient user data")
+            return .failure(.failedRestoringLogin)
+        }
+        
         let homeserverURL = credentials.restorationToken.session.homeserverUrl
         
         let builder = ClientBuilder
             .baseBuilder(httpProxy: URL(string: homeserverURL)?.globalProxy,
-                         sessionDelegate: keychainController)
-            .sessionPath(path: credentials.restorationToken.sessionDirectory.path(percentEncoded: false))
+                         slidingSync: .restored,
+                         sessionDelegate: keychainController,
+                         appHooks: appHooks,
+                         enableOnlySignedDeviceIsolationMode: appSettings.enableOnlySignedDeviceIsolationMode,
+                         eventCacheEnabled: appSettings.eventCacheEnabled)
+            .sessionPaths(dataPath: credentials.restorationToken.sessionDirectories.dataPath,
+                          cachePath: credentials.restorationToken.sessionDirectories.cachePath)
             .username(username: credentials.userID)
             .homeserverUrl(url: homeserverURL)
             .passphrase(passphrase: credentials.restorationToken.passphrase)
@@ -131,6 +143,8 @@ class UserSessionStore: UserSessionStoreProtocol {
             
             try await client.restoreSession(session: credentials.restorationToken.session)
             
+            MXLog.info("Set up session for user \(credentials.userID) at: \(credentials.restorationToken.sessionDirectories)")
+            
             return await .success(setupProxyForClient(client))
         } catch {
             MXLog.error("Failed restoring login with error: \(error)")
@@ -138,28 +152,9 @@ class UserSessionStore: UserSessionStoreProtocol {
         }
     }
     
-    private func setupProxyForClient(_ client: Client) async -> ClientProxyProtocol {
+    private func setupProxyForClient(_ client: ClientProtocol) async -> ClientProxyProtocol {
         await ClientProxy(client: client,
-                          networkMonitor: ServiceLocator.shared.networkMonitor,
-                          appSettings: ServiceLocator.shared.settings)
-    }
-    
-    private func deleteSessionDirectory(for credentials: KeychainCredentials) {
-        do {
-            try FileManager.default.removeItem(at: credentials.restorationToken.sessionDirectory)
-        } catch {
-            MXLog.failure("Failed deleting the session data: \(error)")
-        }
-    }
-    
-    private func deleteCaches(for credentials: KeychainCredentials) {
-        do {
-            let sessionDirectoryContents = try FileManager.default.contentsOfDirectory(at: credentials.restorationToken.sessionDirectory, includingPropertiesForKeys: nil)
-            for url in sessionDirectoryContents where url.path.contains(matrixSDKStateKey) {
-                try FileManager.default.removeItem(at: url)
-            }
-        } catch {
-            MXLog.failure("Failed clearing caches: \(error)")
-        }
+                          networkMonitor: networkMonitor,
+                          appSettings: appSettings)
     }
 }

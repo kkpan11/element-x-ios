@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
@@ -58,7 +49,7 @@ class BugReportService: NSObject, BugReportServiceProtocol {
     // swiftlint:disable:next cyclomatic_complexity
     func submitBugReport(_ bugReport: BugReport,
                          progressListener: CurrentValueSubject<Double, Never>) async -> Result<SubmitBugReportResponse, BugReportServiceError> {
-        let bugReport = appHooks.runBugReportHook(bugReport)
+        let bugReport = appHooks.bugReportHook.update(bugReport)
         
         var params = [
             MultipartFormData(key: "text", type: .text(value: bugReport.text)),
@@ -85,7 +76,7 @@ class BugReportService: NSObject, BugReportServiceProtocol {
         }
         
         if bugReport.includeLogs {
-            let logAttachments = await zipFiles(RustTracing.logFiles)
+            let logAttachments = await zipFiles(Tracing.logFiles)
             for url in logAttachments.files {
                 params.append(MultipartFormData(key: "compressed-log", type: .file(url: url)))
             }
@@ -126,14 +117,14 @@ class BugReportService: NSObject, BugReportServiceProtocol {
             let (data, response) = try await session.dataWithRetry(for: request, delegate: self)
             
             guard let httpResponse = response as? HTTPURLResponse else {
-                let errorDescription = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                let errorDescription = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown error"
                 MXLog.error("Failed to submit bug report: \(errorDescription)")
                 MXLog.error("Response: \(response)")
                 return .failure(.serverError(response, errorDescription))
             }
             
             guard httpResponse.statusCode == 200 else {
-                let errorDescription = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                let errorDescription = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown error"
                 MXLog.error("Failed to submit bug report: \(errorDescription) (\(httpResponse.statusCode))")
                 MXLog.error("Response: \(httpResponse)")
                 return .failure(.httpError(httpResponse, errorDescription))
@@ -172,8 +163,7 @@ class BugReportService: NSObject, BugReportServiceProtocol {
             MultipartFormData(key: "fallback_language", type: .text(value: Bundle.app.developmentLocalization ?? "null")),
             MultipartFormData(key: "local_time", type: .text(value: localTime)),
             MultipartFormData(key: "utc_time", type: .text(value: utcTime)),
-            MultipartFormData(key: "base_bundle_identifier", type: .text(value: InfoPlistReader.main.baseBundleIdentifier)),
-            MultipartFormData(key: "rust_tracing_filter", type: .text(value: RustTracing.currentTracingConfiguration?.filter ?? "null"))
+            MultipartFormData(key: "base_bundle_identifier", type: .text(value: InfoPlistReader.main.baseBundleIdentifier))
         ]
     }
 

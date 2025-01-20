@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
@@ -148,7 +139,7 @@ struct HomeScreen: View {
                                     name: context.viewState.userDisplayName,
                                     contentID: context.viewState.userID,
                                     avatarSize: .user(on: .home),
-                                    imageProvider: context.imageProvider)
+                                    mediaProvider: context.mediaProvider)
                     .accessibilityIdentifier(A11yIdentifiers.homeScreen.userAvatar)
                     .overlayBadge(10, isBadged: context.viewState.requiresExtraAccountSetup)
                     .compositingGroup()
@@ -197,44 +188,40 @@ struct HomeScreen: View {
 // MARK: - Previews
 
 struct HomeScreen_Previews: PreviewProvider, TestablePreview {
-    static let migratingViewModel = viewModel(.migration)
     static let loadingViewModel = viewModel(.skeletons)
     static let emptyViewModel = viewModel(.empty)
     static let loadedViewModel = viewModel(.rooms)
     
     static var previews: some View {
         NavigationStack {
-            HomeScreen(context: migratingViewModel.context)
-        }
-        .previewDisplayName("Migrating")
-        
-        NavigationStack {
             HomeScreen(context: loadingViewModel.context)
         }
+        .snapshotPreferences(expect: loadedViewModel.context.$viewState.map { state in
+            state.roomListMode == .skeletons
+        })
         .previewDisplayName("Loading")
         
         NavigationStack {
             HomeScreen(context: emptyViewModel.context)
         }
+        .snapshotPreferences(expect: emptyViewModel.context.$viewState.map { state in
+            state.roomListMode == .empty
+        })
         .previewDisplayName("Empty")
-        .snapshot(delay: 4.0)
         
         NavigationStack {
             HomeScreen(context: loadedViewModel.context)
         }
+        .snapshotPreferences(expect: loadedViewModel.context.$viewState.map { state in
+            state.roomListMode == .rooms
+        })
         .previewDisplayName("Loaded")
-        .snapshot(delay: 4.0)
     }
     
     static func viewModel(_ mode: HomeScreenRoomListMode) -> HomeScreenViewModel {
-        let userID = mode == .migration ? "@unmigrated_alice:example.com" : "@alice:example.com"
-        
-        let appSettings = AppSettings() // This uses shared storage under the hood
-        appSettings.migratedAccounts[userID] = mode != .migration
+        let userID = "@alice:example.com"
         
         let roomSummaryProviderState: RoomSummaryProviderMockConfigurationState = switch mode {
-        case .migration:
-            .loading
         case .skeletons:
             .loading
         case .empty:
@@ -250,7 +237,7 @@ struct HomeScreen_Previews: PreviewProvider, TestablePreview {
         
         return HomeScreenViewModel(userSession: userSession,
                                    analyticsService: ServiceLocator.shared.analytics,
-                                   appSettings: appSettings,
+                                   appSettings: ServiceLocator.shared.settings,
                                    selectedRoomPublisher: CurrentValueSubject<String?, Never>(nil).asCurrentValuePublisher(),
                                    userIndicatorController: ServiceLocator.shared.userIndicatorController)
     }

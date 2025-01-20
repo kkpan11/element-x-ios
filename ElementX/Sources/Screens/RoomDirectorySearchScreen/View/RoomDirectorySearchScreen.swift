@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Compound
@@ -25,7 +16,7 @@ struct RoomDirectorySearchScreen: View {
             List {
                 Section {
                     ForEach(context.viewState.rooms) { room in
-                        RoomDirectorySearchCell(result: room, imageProvider: context.imageProvider) {
+                        RoomDirectorySearchCell(result: room, mediaProvider: context.mediaProvider) {
                             context.send(viewAction: .select(room: room))
                         }
                     }
@@ -93,7 +84,7 @@ struct RoomDirectorySearchScreen_Previews: PreviewProvider, TestablePreview {
                                                  topic: nil,
                                                  avatar: .room(id: "test_2",
                                                                name: "Test 2",
-                                                               avatarURL: .documentsDirectory),
+                                                               avatarURL: .mockMXCAvatar),
                                                  canBeJoined: false)]
         
         let roomDirectorySearchProxy = RoomDirectorySearchProxyMock(configuration: .init(results: results))
@@ -102,11 +93,10 @@ struct RoomDirectorySearchScreen_Previews: PreviewProvider, TestablePreview {
         
         return RoomDirectorySearchScreenViewModel(clientProxy: clientProxy,
                                                   userIndicatorController: UserIndicatorControllerMock(),
-                                                  imageProvider: MockMediaProvider())
+                                                  mediaProvider: MediaProviderMock(configuration: .init()))
     }()
     
     static var previews: some View {
         RoomDirectorySearchScreen(context: viewModel.context)
-            .snapshot(delay: 1.0)
     }
 }

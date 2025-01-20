@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 // periphery:ignore:all
@@ -26,18 +17,40 @@ class MockRoomTimelineController: RoomTimelineControllerProtocol {
     /// An array of timeline items that will be appended in order when ``simulateIncomingItems()`` is called.
     var incomingItems: [RoomTimelineItemProtocol] = []
     
-    var roomProxy: RoomProxyProtocol?
+    var roomProxy: JoinedRoomProxyProtocol?
     var roomID: String { roomProxy?.id ?? "MockRoomIdentifier" }
+    var timelineKind: TimelineKind
     
     let callbacks = PassthroughSubject<RoomTimelineControllerCallback, Never>()
+    
+    var paginationState: PaginationState = .initial {
+        didSet {
+            callbacks.send(.paginationState(paginationState))
+        }
+    }
     
     var timelineItems: [RoomTimelineItemProtocol] = RoomTimelineItemFixtures.default
     var timelineItemsTimestamp: [TimelineItemIdentifier: Date] = [:]
     
     private var client: UITestsSignalling.Client?
     
-    init(listenForSignals: Bool = false) {
-        callbacks.send(.paginationState(PaginationState(backward: .idle, forward: .timelineEndReached)))
+    static var mediaGallery: MockRoomTimelineController {
+        MockRoomTimelineController(timelineKind: .media(.mediaFilesScreen), timelineItems: (0..<5).reduce([]) { partialResult, _ in
+            partialResult + [RoomTimelineItemFixtures.separator] + RoomTimelineItemFixtures.mediaChunk
+        })
+    }
+    
+    static var emptyMediaGallery: MockRoomTimelineController {
+        let mock = MockRoomTimelineController(timelineKind: .media(.mediaFilesScreen))
+        mock.paginationState = PaginationState(backward: .timelineEndReached, forward: .timelineEndReached)
+        return mock
+    }
+    
+    init(timelineKind: TimelineKind = .live, listenForSignals: Bool = false, timelineItems: [RoomTimelineItemProtocol] = RoomTimelineItemFixtures.default) {
+        self.timelineKind = timelineKind
+        self.timelineItems = timelineItems
+        
+        callbacks.send(.paginationState(paginationState))
         callbacks.send(.isLive(true))
         
         guard listenForSignals else { return }
@@ -63,7 +76,7 @@ class MockRoomTimelineController: RoomTimelineControllerProtocol {
     }
 
     func paginateBackwards(requestSize: UInt16) async -> Result<Void, RoomTimelineControllerError> {
-        callbacks.send(.paginationState(PaginationState(backward: .paginating, forward: .timelineEndReached)))
+        paginationState = PaginationState(backward: .paginating, forward: .timelineEndReached)
         
         if client == nil {
             try? await simulateBackPagination()
@@ -88,17 +101,31 @@ class MockRoomTimelineController: RoomTimelineControllerProtocol {
     
     func sendMessage(_ message: String,
                      html: String?,
-                     inReplyTo itemID: TimelineItemIdentifier?,
+                     inReplyToEventID: String?,
                      intentionalMentions: IntentionalMentions) async { }
         
-    func toggleReaction(_ reaction: String, to itemID: TimelineItemIdentifier) async { }
+    func toggleReaction(_ reaction: String, to eventID: EventOrTransactionId) async { }
     
-    func edit(_ timelineItemID: TimelineItemIdentifier,
+    func edit(_ eventOrTransactionID: EventOrTransactionId,
               message: String,
               html: String?,
               intentionalMentions: IntentionalMentions) async { }
     
-    func redact(_ itemID: TimelineItemIdentifier) async { }
+    func editCaption(_ eventOrTransactionID: EventOrTransactionId,
+                     message: String,
+                     html: String?,
+                     intentionalMentions: IntentionalMentions) async { }
+    
+    func removeCaption(_ eventOrTransactionID: EventOrTransactionId) async { }
+    
+    private(set) var redactCalled = false
+    func redact(_ eventOrTransactionID: EventOrTransactionId) async {
+        redactCalled = true
+    }
+    
+    func pin(eventID: String) async { }
+    
+    func unpin(eventID: String) async { }
     
     func messageEventContent(for itemID: TimelineItemIdentifier) -> RoomMessageEventContentWithoutRelation? {
         .init(noPointer: .init())
@@ -107,8 +134,10 @@ class MockRoomTimelineController: RoomTimelineControllerProtocol {
     func debugInfo(for itemID: TimelineItemIdentifier) -> TimelineItemDebugInfo {
         .init(model: "Mock debug description", originalJSON: nil, latestEditJSON: nil)
     }
-        
-    func retryDecryption(for sessionID: String) async { }
+    
+    func sendHandle(for itemID: TimelineItemIdentifier) -> SendHandleProxy? {
+        nil
+    }
         
     func eventTimestamp(for itemID: TimelineItemIdentifier) -> Date? {
         timelineItemsTimestamp[itemID] ?? .now
@@ -162,8 +191,8 @@ class MockRoomTimelineController: RoomTimelineControllerProtocol {
     /// Prepends the next chunk of items to the `timelineItems` array.
     private func simulateBackPagination() async throws {
         defer {
-            callbacks.send(.paginationState(PaginationState(backward: backPaginationResponses.isEmpty ? .timelineEndReached : .idle,
-                                                            forward: .timelineEndReached)))
+            paginationState = PaginationState(backward: backPaginationResponses.isEmpty ? .timelineEndReached : .idle,
+                                              forward: .timelineEndReached)
         }
         
         guard !backPaginationResponses.isEmpty else { return }

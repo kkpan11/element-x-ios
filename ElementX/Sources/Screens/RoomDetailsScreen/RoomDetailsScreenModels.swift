@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Compound
@@ -30,6 +21,10 @@ enum RoomDetailsScreenViewModelAction {
     case requestPollsHistoryPresentation
     case requestRolesAndPermissionsPresentation
     case startCall
+    case displayPinnedEventsTimeline
+    case displayMediaEventsTimeline
+    case displayKnockingRequests
+    case displaySecurityAndPrivacy
 }
 
 // MARK: View
@@ -50,8 +45,23 @@ struct RoomDetailsScreenViewState: BindableState {
     var canEditRoomTopic = false
     var canEditRoomAvatar = false
     var canEditRolesOrPermissions = false
+    var canKickUsers = false
+    var canBanUsers = false
     var notificationSettingsState: RoomDetailsNotificationSettingsState = .loading
     var canJoinCall = false
+    var pinnedEventsActionState = RoomDetailsScreenPinnedEventsActionState.loading
+    
+    var knockingEnabled = false
+    var isKnockableRoom = false
+    var knockRequestsCount = 0
+    
+    var canSeeKnockingRequests: Bool {
+        knockingEnabled && dmRecipient == nil && isKnockableRoom && (canInviteUsers || canKickUsers || canBanUsers)
+    }
+    
+    var canSeeSecurityAndPrivacy: Bool {
+        knockingEnabled && dmRecipient == nil && canEditRolesOrPermissions
+    }
     
     var canEdit: Bool {
         !isDirect && (canEditRoomName || canEditRoomTopic || canEditRoomAvatar)
@@ -189,11 +199,15 @@ enum RoomDetailsScreenViewAction {
     case unignoreConfirmed
     case processTapNotifications
     case processToggleMuteNotifications
-    case displayAvatar
+    case displayAvatar(URL)
     case processTapPolls
     case toggleFavourite(isFavourite: Bool)
     case processTapRolesAndPermissions
+    case processTapSecurityAndPrivacy
     case processTapCall
+    case processTapPinnedEvents
+    case processTapMediaEvents
+    case processTapRequestsToJoin
 }
 
 enum RoomDetailsScreenViewShortcut {
@@ -260,4 +274,27 @@ enum RoomDetailsScreenErrorType: Hashable {
     case alert
     /// Leaving room has failed..
     case unknown
+}
+
+enum RoomDetailsScreenPinnedEventsActionState {
+    case loading
+    case loaded(numberOfItems: Int)
+    
+    var count: String {
+        switch self {
+        case .loading:
+            return ""
+        case .loaded(let numberOfItems):
+            return "\(numberOfItems)"
+        }
+    }
+    
+    var isLoading: Bool {
+        switch self {
+        case .loading:
+            return true
+        default:
+            return false
+        }
+    }
 }

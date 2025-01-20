@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
@@ -21,7 +12,13 @@ enum DeveloperOptionsScreenViewModelAction {
 }
 
 struct DeveloperOptionsScreenViewState: BindableState {
+    let elementCallBaseURL: URL
+    let isUsingNativeSlidingSync: Bool
     var bindings: DeveloperOptionsScreenViewStateBindings
+    
+    var slidingSyncFooter: String {
+        "The method used to configure sliding sync when signing in. Changing this setting has no effect until you sign out.\n\nYour current session is using \(isUsingNativeSlidingSync ? "native sliding sync." : "a sliding sync proxy.")"
+    }
 }
 
 // periphery: ignore - subscripts are seen as false positive
@@ -44,10 +41,16 @@ enum DeveloperOptionsScreenViewAction {
 }
 
 protocol DeveloperOptionsProtocol: AnyObject {
-    var logLevel: TracingConfiguration.LogLevel { get set }
+    var logLevel: LogLevel { get set }
+    var slidingSyncDiscovery: AppSettings.SlidingSyncDiscovery { get set }
+    var publicSearchEnabled: Bool { get set }
     var hideUnreadMessagesBadge: Bool { get set }
-    var elementCallBaseURL: URL { get set }
     var fuzzyRoomListSearchEnabled: Bool { get set }
+    var hideTimelineMedia: Bool { get set }
+    var enableOnlySignedDeviceIsolationMode: Bool { get set }
+    var elementCallBaseURLOverride: URL? { get set }
+    var knockingEnabled: Bool { get set }
+    var eventCacheEnabled: Bool { get set }
 }
 
 extension AppSettings: DeveloperOptionsProtocol { }

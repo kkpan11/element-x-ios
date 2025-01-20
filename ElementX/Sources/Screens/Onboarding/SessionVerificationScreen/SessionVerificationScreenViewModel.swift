@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
@@ -21,6 +12,7 @@ typealias SessionVerificationViewModelType = StateStoreViewModel<SessionVerifica
 
 class SessionVerificationScreenViewModel: SessionVerificationViewModelType, SessionVerificationScreenViewModelProtocol {
     private let sessionVerificationControllerProxy: SessionVerificationControllerProxyProtocol
+    private let flow: SessionVerificationScreenFlow
     
     private var stateMachine: SessionVerificationScreenStateMachine
 
@@ -31,21 +23,25 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
     }
 
     init(sessionVerificationControllerProxy: SessionVerificationControllerProxyProtocol,
+         flow: SessionVerificationScreenFlow,
          verificationState: SessionVerificationScreenStateMachine.State = .initial) {
         self.sessionVerificationControllerProxy = sessionVerificationControllerProxy
+        self.flow = flow
         
-        stateMachine = SessionVerificationScreenStateMachine()
+        stateMachine = SessionVerificationScreenStateMachine(state: verificationState)
         
-        super.init(initialViewState: .init(verificationState: verificationState))
+        super.init(initialViewState: .init(flow: flow, verificationState: verificationState))
         
         setupStateMachine()
         
-        sessionVerificationControllerProxy.callbacks
+        sessionVerificationControllerProxy.actions
             .receive(on: DispatchQueue.main)
             .sink { [weak self] callback in
                 guard let self else { return }
                 
                 switch callback {
+                case .receivedVerificationRequest:
+                    break // Incoming verification requests are handled on the higher levels
                 case .acceptedVerificationRequest:
                     self.stateMachine.processEvent(.didAcceptVerificationRequest)
                 case .startedSasVerification:
@@ -66,10 +62,20 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
                 }
             }
             .store(in: &cancellables)
+        
+        if case .responder(let details) = flow {
+            Task {
+                await self.sessionVerificationControllerProxy.acknowledgeVerificationRequest(details: details)
+            }
+        }
     }
     
     override func process(viewAction: SessionVerificationScreenViewAction) {
         switch viewAction {
+        case .acceptVerificationRequest:
+            stateMachine.processEvent(.acceptVerificationRequest)
+        case .ignoreVerificationRequest:
+            actionsSubject.send(.finished)
         case .requestVerification:
             stateMachine.processEvent(.requestVerification)
         case .startSasVerification:
@@ -80,13 +86,16 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
             stateMachine.processEvent(.acceptChallenge)
         case .decline:
             stateMachine.processEvent(.declineChallenge)
+        case .done:
+            actionsSubject.send(.finished)
         }
     }
     
     func stop() {
-        let uncancellableStates: [SessionVerificationScreenStateMachine.State] = [.initial, .verified, .cancelled]
-        
-        if !uncancellableStates.contains(stateMachine.state) {
+        switch stateMachine.state {
+        case .initial, .verified, .cancelled: // non-cancellable states
+            return
+        default:
             stateMachine.processEvent(.cancel)
         }
     }
@@ -100,6 +109,8 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
             state.verificationState = context.toState
             
             switch (context.fromState, context.event, context.toState) {
+            case (.initial, .acceptVerificationRequest, .acceptingVerificationRequest):
+                acceptVerificationRequest()
             case (.initial, .requestVerification, .requestingVerification):
                 requestVerification()
             case (.verificationRequestAccepted, .startSasVerification, .startingSasVerification):
@@ -112,6 +123,10 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
                 cancelVerification()
             case (_, _, .verified):
                 actionsSubject.send(.finished)
+            case (.initial, _, .cancelled):
+                if case .responder = flow {
+                    actionsSubject.send(.finished)
+                }
             default:
                 break
             }
@@ -119,6 +134,21 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
         
         stateMachine.addErrorHandler { context in
             MXLog.error("Failed transition with context: \(context)")
+        }
+    }
+    
+    private func acceptVerificationRequest() {
+        Task {
+            guard case .responder = flow else {
+                fatalError("Incorrect API usage.")
+            }
+            
+            switch await sessionVerificationControllerProxy.acceptVerificationRequest() {
+            case .success:
+                stateMachine.processEvent(.didAcceptVerificationRequest)
+            case .failure:
+                stateMachine.processEvent(.didFail)
+            }
         }
     }
     

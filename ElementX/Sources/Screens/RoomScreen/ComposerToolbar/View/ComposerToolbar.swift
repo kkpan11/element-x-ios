@@ -1,17 +1,8 @@
 //
-// Copyright 2023 New Vector Ltd
+// Copyright 2023, 2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Compound
@@ -57,7 +48,7 @@ struct ComposerToolbar: View {
     }
     
     private var suggestionView: some View {
-        CompletionSuggestionView(imageProvider: context.imageProvider,
+        CompletionSuggestionView(mediaProvider: context.mediaProvider,
                                  items: context.viewState.suggestions,
                                  showBackgroundShadow: !context.composerExpanded) { suggestion in
             context.send(viewAction: .selectedSuggestion(suggestion))
@@ -71,7 +62,7 @@ struct ComposerToolbar: View {
             if !context.composerFormattingEnabled {
                 if context.viewState.isUploading {
                     ProgressView()
-                        .scaledFrame(size: 44, relativeTo: .title)
+                        .scaledFrame(size: 44, relativeTo: .compound.headingLG)
                         .padding(.leading, 3)
                 } else if context.viewState.showSendButton {
                     sendButton
@@ -128,40 +119,44 @@ struct ComposerToolbar: View {
             Image(Asset.Images.closeRte.name)
                 .resizable()
                 .scaledToFit()
-                .scaledFrame(size: 30, relativeTo: .title)
-                .scaledPadding(7, relativeTo: .title)
+                .scaledFrame(size: 30, relativeTo: .compound.headingLG)
+                .scaledPadding(7, relativeTo: .compound.headingLG)
         }
         .accessibilityLabel(L10n.actionClose)
         .accessibilityIdentifier(A11yIdentifiers.roomScreen.composerToolbar.closeFormattingOptions)
     }
     
     private var sendButton: some View {
-        Button {
-            context.send(viewAction: .sendMessage)
-        } label: {
-            CompoundIcon(context.viewState.composerMode.isEdit ? \.check : \.sendSolid)
-                .scaledPadding(6, relativeTo: .title)
-                .accessibilityLabel(context.viewState.composerMode.isEdit ? L10n.actionConfirm : L10n.actionSend)
-                .foregroundColor(context.viewState.sendButtonDisabled ? .compound.iconDisabled : .white)
-                .background {
-                    Circle()
-                        .foregroundColor(context.viewState.sendButtonDisabled ? .clear : .compound.iconAccentTertiary)
+        Group {
+            if context.viewState.composerMode.isEdit {
+                Button(action: sendMessage) {
+                    CompoundIcon(\.check, size: .medium, relativeTo: .compound.headingLG)
+                        .foregroundColor(.white)
+                        .scaledPadding(6, relativeTo: .compound.headingLG)
+                        .background(.compound.iconAccentTertiary, in: Circle())
+                        .accessibilityLabel(L10n.actionConfirm)
                 }
-                .scaledPadding(4, relativeTo: .title)
+            } else {
+                SendButton(action: sendMessage)
+                    .accessibilityLabel(L10n.actionSend)
+            }
         }
+        .scaledPadding(4, relativeTo: .compound.headingLG)
         .disabled(context.viewState.sendButtonDisabled)
         .animation(.linear(duration: 0.1).disabledDuringTests(), value: context.viewState.sendButtonDisabled)
         .keyboardShortcut(.return, modifiers: [.command])
+        .accessibilityIdentifier(A11yIdentifiers.roomScreen.sendButton)
     }
     
     private var messageComposer: some View {
         MessageComposer(plainComposerText: $context.plainComposerText,
+                        presendCallback: $context.presendCallback,
                         composerView: composerView,
                         mode: context.viewState.composerMode,
                         composerFormattingEnabled: context.composerFormattingEnabled,
                         showResizeGrabber: context.composerFormattingEnabled,
                         isExpanded: $context.composerExpanded) {
-            context.send(viewAction: .sendMessage)
+            sendMessage()
         } editAction: {
             context.send(viewAction: .editLastMessage)
         } pasteAction: { provider in
@@ -182,26 +177,38 @@ struct ComposerToolbar: View {
         .focused($composerFocused)
         .padding(.leading, context.composerFormattingEnabled ? 7 : 0)
         .padding(.trailing, context.composerFormattingEnabled ? 4 : 0)
+        .accessibilityIdentifier(A11yIdentifiers.roomScreen.messageComposer)
         .onTapGesture {
             guard !composerFocused else { return }
             composerFocused = true
         }
-        .onChange(of: context.composerFocused) { newValue in
+        .onChange(of: context.composerFocused) { _, newValue in
             guard composerFocused != newValue else { return }
             
             composerFocused = newValue
         }
-        .onChange(of: composerFocused) { newValue in
+        .onChange(of: composerFocused) { _, newValue in
             context.composerFocused = newValue
         }
-        .onChange(of: context.plainComposerText) { _ in
+        .onChange(of: context.plainComposerText) {
             context.send(viewAction: .plainComposerTextChanged)
         }
-        .onChange(of: context.composerFormattingEnabled) { _ in
+        .onChange(of: context.composerFormattingEnabled) {
             context.send(viewAction: .didToggleFormattingOptions)
         }
         .onAppear {
             composerFocused = context.composerFocused
+        }
+    }
+    
+    private func sendMessage() {
+        // Allow the inner TextField do apply any final processing before
+        // sending e.g. accepting current autocorrection.
+        // Fixes https://github.com/element-hq/element-x-ios/issues/3216
+        context.presendCallback?()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            context.send(viewAction: .sendMessage)
         }
     }
     
@@ -266,8 +273,8 @@ struct ComposerToolbar: View {
         } label: {
             CompoundIcon(\.delete)
                 .scaledToFit()
-                .scaledFrame(size: 30, relativeTo: .title)
-                .scaledPadding(7, relativeTo: .title)
+                .scaledFrame(size: 30, relativeTo: .compound.headingLG)
+                .scaledPadding(7, relativeTo: .compound.headingLG)
         }
         .buttonStyle(.compound(.plain))
         .accessibilityLabel(L10n.a11yDelete)
@@ -286,16 +293,18 @@ struct ComposerToolbar: View {
     }
 }
 
+// MARK: - Previews
+
 struct ComposerToolbar_Previews: PreviewProvider, TestablePreview {
     static let wysiwygViewModel = WysiwygComposerViewModel()
     static let composerViewModel = ComposerToolbarViewModel(wysiwygViewModel: wysiwygViewModel,
                                                             completionSuggestionService: CompletionSuggestionServiceMock(configuration: .init(suggestions: suggestions)),
-                                                            mediaProvider: MockMediaProvider(),
+                                                            mediaProvider: MediaProviderMock(configuration: .init()),
                                                             mentionDisplayHelper: ComposerMentionDisplayHelper.mock,
                                                             analyticsService: ServiceLocator.shared.analytics,
                                                             composerDraftService: ComposerDraftServiceMock())
     static let suggestions: [SuggestionItem] = [.user(item: MentionSuggestionItem(id: "@user_mention_1:matrix.org", displayName: "User 1", avatarURL: nil, range: .init())),
-                                                .user(item: MentionSuggestionItem(id: "@user_mention_2:matrix.org", displayName: "User 2", avatarURL: URL.documentsDirectory, range: .init()))]
+                                                .user(item: MentionSuggestionItem(id: "@user_mention_2:matrix.org", displayName: "User 2", avatarURL: .mockMXCUserAvatar, range: .init()))]
     
     static var previews: some View {
         ComposerToolbar.mock(focused: true)
@@ -325,15 +334,13 @@ struct ComposerToolbar_Previews: PreviewProvider, TestablePreview {
     }
 }
 
-// MARK: - Mock
-
 extension ComposerToolbar {
     static func mock(focused: Bool = true) -> ComposerToolbar {
         let wysiwygViewModel = WysiwygComposerViewModel()
         var composerViewModel: ComposerToolbarViewModel {
             let model = ComposerToolbarViewModel(wysiwygViewModel: wysiwygViewModel,
                                                  completionSuggestionService: CompletionSuggestionServiceMock(configuration: .init()),
-                                                 mediaProvider: MockMediaProvider(),
+                                                 mediaProvider: MediaProviderMock(configuration: .init()),
                                                  mentionDisplayHelper: ComposerMentionDisplayHelper.mock,
                                                  analyticsService: ServiceLocator.shared.analytics,
                                                  composerDraftService: ComposerDraftServiceMock())
@@ -350,7 +357,7 @@ extension ComposerToolbar {
         var composerViewModel: ComposerToolbarViewModel {
             let model = ComposerToolbarViewModel(wysiwygViewModel: wysiwygViewModel,
                                                  completionSuggestionService: CompletionSuggestionServiceMock(configuration: .init()),
-                                                 mediaProvider: MockMediaProvider(),
+                                                 mediaProvider: MediaProviderMock(configuration: .init()),
                                                  mentionDisplayHelper: ComposerMentionDisplayHelper.mock,
                                                  analyticsService: ServiceLocator.shared.analytics,
                                                  composerDraftService: ComposerDraftServiceMock())
@@ -367,7 +374,7 @@ extension ComposerToolbar {
         var composerViewModel: ComposerToolbarViewModel {
             let model = ComposerToolbarViewModel(wysiwygViewModel: wysiwygViewModel,
                                                  completionSuggestionService: CompletionSuggestionServiceMock(configuration: .init()),
-                                                 mediaProvider: MockMediaProvider(),
+                                                 mediaProvider: MediaProviderMock(configuration: .init()),
                                                  mentionDisplayHelper: ComposerMentionDisplayHelper.mock,
                                                  analyticsService: ServiceLocator.shared.analytics,
                                                  composerDraftService: ComposerDraftServiceMock())
@@ -385,11 +392,15 @@ extension ComposerToolbar {
         var composerViewModel: ComposerToolbarViewModel {
             let model = ComposerToolbarViewModel(wysiwygViewModel: wysiwygViewModel,
                                                  completionSuggestionService: CompletionSuggestionServiceMock(configuration: .init()),
-                                                 mediaProvider: MockMediaProvider(),
+                                                 mediaProvider: MediaProviderMock(configuration: .init()),
                                                  mentionDisplayHelper: ComposerMentionDisplayHelper.mock,
                                                  analyticsService: ServiceLocator.shared.analytics,
                                                  composerDraftService: ComposerDraftServiceMock())
-            model.state.composerMode = .previewVoiceMessage(state: AudioPlayerState(id: .recorderPreview, duration: 10.0), waveform: .data(waveformData), isUploading: uploading)
+            model.state.composerMode = .previewVoiceMessage(state: AudioPlayerState(id: .recorderPreview,
+                                                                                    title: L10n.commonVoiceMessage,
+                                                                                    duration: 10.0),
+                                                            waveform: .data(waveformData),
+                                                            isUploading: uploading)
             return model
         }
         return ComposerToolbar(context: composerViewModel.context,
@@ -402,14 +413,14 @@ extension ComposerToolbar {
         var composerViewModel: ComposerToolbarViewModel {
             let model = ComposerToolbarViewModel(wysiwygViewModel: wysiwygViewModel,
                                                  completionSuggestionService: CompletionSuggestionServiceMock(configuration: .init()),
-                                                 mediaProvider: MockMediaProvider(),
+                                                 mediaProvider: MediaProviderMock(configuration: .init()),
                                                  mentionDisplayHelper: ComposerMentionDisplayHelper.mock,
                                                  analyticsService: ServiceLocator.shared.analytics,
                                                  composerDraftService: ComposerDraftServiceMock())
-            model.state.composerMode = isLoading ? .reply(itemID: .init(timelineID: ""),
+            model.state.composerMode = isLoading ? .reply(eventID: UUID().uuidString,
                                                           replyDetails: .loading(eventID: ""),
                                                           isThread: false) :
-                .reply(itemID: .init(timelineID: ""),
+                .reply(eventID: UUID().uuidString,
                        replyDetails: .loaded(sender: .init(id: "",
                                                            displayName: "Test"),
                                              eventID: "", eventContent: .message(.text(.init(body: "Hello World!")))), isThread: false)

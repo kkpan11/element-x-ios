@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
@@ -41,11 +32,14 @@ enum ClientProxyError: Error {
     case sdkError(Error)
     
     case invalidMedia
+    case invalidServerName
     case failedUploadingMedia(Error, MatrixErrorCode)
+    case roomPreviewIsPrivate
+    case failedRetrievingUserIdentity
+    case failedResolvingRoomAlias
 }
 
 enum SlidingSyncConstants {
-    static let defaultTimelineLimit: UInt = 20
     static let maximumVisibleRangeSize = 30
 }
 
@@ -74,7 +68,7 @@ struct RoomPreviewDetails {
     let topic: String?
     let avatarURL: URL?
     let memberCount: UInt
-    let isHistoryWorldReadable: Bool
+    let isHistoryWorldReadable: Bool?
     let isJoined: Bool
     let isInvited: Bool
     let isPublic: Bool
@@ -94,7 +88,14 @@ protocol ClientProxyProtocol: AnyObject, MediaLoaderProtocol {
     var deviceID: String? { get }
 
     var homeserver: String { get }
-        
+
+    var slidingSyncVersion: SlidingSyncVersion { get }
+    var availableSlidingSyncVersions: [SlidingSyncVersion] { get async }
+    
+    var canDeactivateAccount: Bool { get }
+    
+    var userIDServerName: String? { get }
+    
     var userDisplayNamePublisher: CurrentValuePublisher<String?, Never> { get }
 
     var userAvatarURLPublisher: CurrentValuePublisher<URL?, Never> { get }
@@ -106,6 +107,8 @@ protocol ClientProxyProtocol: AnyObject, MediaLoaderProtocol {
     
     var roomSummaryProvider: RoomSummaryProviderProtocol? { get }
     
+    var roomsToAwait: Set<String> { get set }
+    
     /// Used for listing rooms that shouldn't be affected by the main `roomSummaryProvider` filtering
     var alternateRoomSummaryProvider: RoomSummaryProviderProtocol? { get }
     
@@ -113,11 +116,14 @@ protocol ClientProxyProtocol: AnyObject, MediaLoaderProtocol {
     
     var secureBackupController: SecureBackupControllerProtocol { get }
     
+    var sessionVerificationController: SessionVerificationControllerProxyProtocol? { get }
+    
     func isOnlyDeviceLeft() async -> Result<Bool, ClientProxyError>
     
     func startSync()
 
     func stopSync()
+    func stopSync(completion: (() -> Void)?) // Hopefully this will become async once we get SE-0371.
     
     func accountURL(action: AccountManagementAction) async -> URL?
     
@@ -127,15 +133,26 @@ protocol ClientProxyProtocol: AnyObject, MediaLoaderProtocol {
     
     func createDirectRoom(with userID: String, expectedRoomName: String?) async -> Result<String, ClientProxyError>
     
-    func createRoom(name: String, topic: String?, isRoomPrivate: Bool, userIDs: [String], avatarURL: URL?) async -> Result<String, ClientProxyError>
+    // swiftlint:disable:next function_parameter_count
+    func createRoom(name: String,
+                    topic: String?,
+                    isRoomPrivate: Bool,
+                    isKnockingOnly: Bool,
+                    userIDs: [String],
+                    avatarURL: URL?,
+                    aliasLocalPart: String?) async -> Result<String, ClientProxyError>
     
     func joinRoom(_ roomID: String, via: [String]) async -> Result<Void, ClientProxyError>
     
     func joinRoomAlias(_ roomAlias: String) async -> Result<Void, ClientProxyError>
     
+    func knockRoom(_ roomID: String, via: [String], message: String?) async -> Result<Void, ClientProxyError>
+    
+    func knockRoomAlias(_ roomAlias: String, message: String?) async -> Result<Void, ClientProxyError>
+    
     func uploadMedia(_ media: MediaInfo) async -> Result<String, ClientProxyError>
     
-    func roomForIdentifier(_ identifier: String) async -> RoomProxyProtocol?
+    func roomForIdentifier(_ identifier: String) async -> RoomProxyType?
     
     func roomPreviewForIdentifier(_ identifier: String, via: [String]) async -> Result<RoomPreviewDetails, ClientProxyError>
     
@@ -148,9 +165,9 @@ protocol ClientProxyProtocol: AnyObject, MediaLoaderProtocol {
     func setUserAvatar(media: MediaInfo) async -> Result<Void, ClientProxyError>
     
     func removeUserAvatar() async -> Result<Void, ClientProxyError>
-        
-    func sessionVerificationControllerProxy() async -> Result<SessionVerificationControllerProxyProtocol, ClientProxyError>
 
+    func deactivateAccount(password: String?, eraseData: Bool) async -> Result<Void, ClientProxyError>
+    
     func logout() async -> URL?
 
     func setPusher(with configuration: PusherConfiguration) async throws
@@ -162,6 +179,10 @@ protocol ClientProxyProtocol: AnyObject, MediaLoaderProtocol {
     func roomDirectorySearchProxy() -> RoomDirectorySearchProxyProtocol
     
     func resolveRoomAlias(_ alias: String) async -> Result<ResolvedRoomAlias, ClientProxyError>
+    
+    func isAliasAvailable(_ alias: String) async -> Result<Bool, ClientProxyError>
+    
+    func getElementWellKnown() async -> Result<ElementWellKnown?, ClientProxyError>
 
     // MARK: - Ignored users
     
@@ -177,8 +198,13 @@ protocol ClientProxyProtocol: AnyObject, MediaLoaderProtocol {
     
     func recentConversationCounterparts() async -> [UserProfileProxy]
     
-    // MARK: - Encryption Info
+    // MARK: - Crypto
     
     func ed25519Base64() async -> String?
     func curve25519Base64() async -> String?
+    
+    func pinUserIdentity(_ userID: String) async -> Result<Void, ClientProxyError>
+    func resetIdentity() async -> Result<IdentityResetHandle?, ClientProxyError>
+    
+    func userIdentity(for userID: String) async -> Result<UserIdentity?, ClientProxyError>
 }

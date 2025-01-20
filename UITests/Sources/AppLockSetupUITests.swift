@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import XCTest
@@ -44,7 +35,7 @@ class AppLockSetupUITests: XCTestCase {
         try await Task.sleep(for: .seconds(0.5))
         
         // Create PIN screen.
-        try await app.assertScreenshot(.appLockSetupFlow, step: Step.createPIN)
+        try await app.assertScreenshot(.appLockSetupFlow, step: Step.createPIN, delay: .seconds(0.5))
         
         enterPIN()
         
@@ -116,7 +107,7 @@ class AppLockSetupUITests: XCTestCase {
         enterPIN()
         
         // Settings screen.
-        try await app.assertScreenshot(.appLockSetupFlow, step: Step.settings)
+        try await app.assertScreenshot(.appLockSetupFlow, step: Step.settings, delay: .seconds(0.5))
         
         app.buttons[A11yIdentifiers.appLockSetupSettingsScreen.removePIN].tap()
         app.alerts.element.buttons[A11yIdentifiers.alertInfo.primaryButton].tap()
@@ -127,6 +118,8 @@ class AppLockSetupUITests: XCTestCase {
     
     func testCancel() async throws {
         app = Application.launch(.appLockSetupFlowUnlock)
+        
+        app.showKeyboardIfNeeded() // The secure text field is focussed automatically
         
         // Create PIN screen.
         try await app.assertScreenshot(.appLockSetupFlowUnlock)
@@ -143,13 +136,13 @@ class AppLockSetupUITests: XCTestCase {
         let textField = app.secureTextFields[A11yIdentifiers.appLockSetupPINScreen.textField]
         XCTAssert(textField.waitForExistence(timeout: 10))
         
-        textField.clearAndTypeText("2023")
+        textField.clearAndTypeText("2023", app: app)
     }
     
     private func enterDifferentPIN() {
         let textField = app.secureTextFields[A11yIdentifiers.appLockSetupPINScreen.textField]
         XCTAssert(textField.waitForExistence(timeout: 10))
         
-        textField.clearAndTypeText("2233")
+        textField.clearAndTypeText("2233", app: app)
     }
 }

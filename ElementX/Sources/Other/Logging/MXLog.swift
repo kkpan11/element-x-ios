@@ -1,17 +1,9 @@
 //
-// Copyright 2021 The Matrix.org Foundation C.I.C
+// Copyright 2024 New Vector Ltd.
+// Copyright 2021-2024 The Matrix.org Foundation C.I.C
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
@@ -30,21 +22,18 @@ enum MXLog {
     private static var didConfigureOnce = false
     
     private static var rootSpan: Span!
-    private static var target: String!
+    private static var currentTarget: String!
     
-    static func configure(target: String? = nil,
-                          logLevel: TracingConfiguration.LogLevel) {
+    static func configure(currentTarget: String,
+                          filePrefix: String?,
+                          logLevel: LogLevel) {
         guard !didConfigureOnce else { return }
         
-        RustTracing.setup(configuration: .init(logLevel: logLevel, target: target))
+        Tracing.setup(logLevel: logLevel, currentTarget: currentTarget, filePrefix: filePrefix)
         
-        if let target {
-            self.target = target
-        } else {
-            self.target = Constants.target
-        }
+        self.currentTarget = currentTarget
         
-        rootSpan = Span(file: #file, line: #line, level: .info, target: self.target, name: "root")
+        rootSpan = Span(file: #file, line: #line, level: .info, target: self.currentTarget, name: "root")
         rootSpan.enter()
         
         didConfigureOnce = true
@@ -146,7 +135,7 @@ enum MXLog {
             rootSpan.enter()
         }
         
-        return Span(file: file, line: UInt32(line), level: level, target: target, name: name)
+        return Span(file: file, line: UInt32(line), level: level.rustLogLevel, target: currentTarget, name: name)
     }
     
     // periphery:ignore:parameters function,column,context
@@ -165,6 +154,6 @@ enum MXLog {
             rootSpan.enter()
         }
         
-        logEvent(file: (file as NSString).lastPathComponent, line: UInt32(line), level: level, target: target, message: "\(message)")
+        logEvent(file: (file as NSString).lastPathComponent, line: UInt32(line), level: level.rustLogLevel, target: currentTarget, message: "\(message)")
     }
 }

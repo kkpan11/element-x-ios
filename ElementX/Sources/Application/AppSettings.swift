@@ -1,21 +1,20 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
 import SwiftUI
+
+// Common settings between app and NSE
+protocol CommonSettingsProtocol {
+    var logLevel: LogLevel { get }
+    var enableOnlySignedDeviceIsolationMode: Bool { get }
+    var hideTimelineMedia: Bool { get }
+    var eventCacheEnabled: Bool { get }
+}
 
 /// Store Element specific app settings.
 final class AppSettings {
@@ -23,28 +22,34 @@ final class AppSettings {
         case lastVersionLaunched
         case appLockNumberOfPINAttempts
         case appLockNumberOfBiometricAttempts
-        case migratedAccounts
         case timelineStyle
         
         case analyticsConsentState
         case hasRunNotificationPermissionsOnboarding
         case hasRunIdentityConfirmationOnboarding
         
+        case frequentlyUsedSystemEmojis
+        
         case enableNotifications
         case enableInAppNotifications
         case pusherProfileTag
         case logLevel
         case viewSourceEnabled
+        case optimizeMediaUploads
         case appAppearance
         case sharePresence
         case hideUnreadMessagesBadge
+        case hideTimelineMedia
         
-        case elementCallBaseURL
-        case elementCallEncryptionEnabled
+        case elementCallBaseURLOverride
         
         // Feature flags
+        case slidingSyncDiscovery
         case publicSearchEnabled
         case fuzzyRoomListSearchEnabled
+        case enableOnlySignedDeviceIsolationMode
+        case knockingEnabled
+        case eventCacheEnabled
     }
     
     private static var suiteName: String = InfoPlistReader.main.appGroupIdentifier
@@ -104,10 +109,6 @@ final class AppSettings {
     /// so that it can be passed to Rust as a ServerName for well-known discovery.
     private(set) var defaultHomeserverAddress = "matrix.org"
     
-    /// An override of the homeserver's Sliding Sync proxy URL. This allows development against servers
-    /// that don't yet have an officially trusted proxy configured in their well-known.
-    let slidingSyncProxyURL: URL? = nil
-    
     /// The task identifier used for background app refresh. Also used in main target's the Info.plist
     let backgroundAppRefreshTaskIdentifier = "io.element.elementx.background.refresh"
 
@@ -127,6 +128,8 @@ final class AppSettings {
     let encryptionURL: URL = "https://element.io/help#encryption"
     /// A URL where users can go read more about the chat backup.
     let chatBackupDetailsURL: URL = "https://element.io/help#encryption5"
+    /// A URL where users can go read more about identity pinning violations
+    let identityPinningViolationDetailsURL: URL = "https://element.io/help#encryption18"
     /// Any domains that Element web may be hosted on - used for handling links.
     let elementWebHosts = ["app.element.io", "staging.element.io", "develop.element.io"]
     
@@ -152,14 +155,8 @@ final class AppSettings {
     
     /// Any pre-defined static client registrations for OIDC issuers.
     let oidcStaticRegistrations: [URL: String] = ["https://id.thirdroom.io/realms/thirdroom": "elementx"]
-    /// The redirect URL used for OIDC.
-    let oidcRedirectURL = {
-        guard let url = URL(string: "\(InfoPlistReader.main.appScheme):/callback") else {
-            fatalError("Invalid OIDC redirect URL")
-        }
-        
-        return url
-    }()
+    /// The redirect URL used for OIDC. This no longer uses universal links so we don't need the bundle ID to avoid conflicts between Element X, Nightly and PR builds.
+    let oidcRedirectURL: URL = "https://element.io/oidc/login"
     
     private(set) lazy var oidcConfiguration = OIDCConfigurationProxy(clientName: InfoPlistReader.main.bundleDisplayName,
                                                                      redirectURI: oidcRedirectURL,
@@ -170,14 +167,10 @@ final class AppSettings {
                                                                      contacts: [supportEmailAddress],
                                                                      staticRegistrations: oidcStaticRegistrations.mapKeys { $0.absoluteString },
                                                                      dynamicRegistrationsFile: .sessionsBaseDirectory.appending(path: "oidc/registrations.json"))
-
-    /// A dictionary of accounts that have performed an initial sync through their proxy.
-    ///
-    /// This is a temporary workaround. In the future we should be able to receive a signal from the
-    /// proxy that it is the first sync (or that an upgrade on the backend will involve a slower sync).
-    @UserPreference(key: UserDefaultsKeys.migratedAccounts, defaultValue: [:], storageType: .userDefaults(store))
-    var migratedAccounts: [String: Bool]
-
+    
+    /// A temporary hack to allow registration on matrix.org until MAS is deployed.
+    let webRegistrationEnabled = true
+    
     // MARK: - Notifications
     
     var pusherAppId: String {
@@ -237,6 +230,9 @@ final class AppSettings {
     @UserPreference(key: UserDefaultsKeys.hasRunIdentityConfirmationOnboarding, defaultValue: false, storageType: .userDefaults(store))
     var hasRunIdentityConfirmationOnboarding
     
+    @UserPreference(key: UserDefaultsKeys.frequentlyUsedSystemEmojis, defaultValue: [FrequentlyUsedEmoji](), storageType: .userDefaults(store))
+    var frequentlyUsedSystemEmojis
+    
     // MARK: - Home Screen
     
     @UserPreference(key: UserDefaultsKeys.hideUnreadMessagesBadge, defaultValue: false, storageType: .userDefaults(store))
@@ -246,11 +242,20 @@ final class AppSettings {
     
     @UserPreference(key: UserDefaultsKeys.viewSourceEnabled, defaultValue: isDevelopmentBuild, storageType: .userDefaults(store))
     var viewSourceEnabled
+    
+    @UserPreference(key: UserDefaultsKeys.optimizeMediaUploads, defaultValue: true, storageType: .userDefaults(store))
+    var optimizeMediaUploads
+    
+    /// Whether or not to show a warning on the media caption composer so the user knows
+    /// that captions might not be visible to users who are using other Matrix clients.
+    let shouldShowMediaCaptionWarning = true
 
     // MARK: - Element Call
     
-    @UserPreference(key: UserDefaultsKeys.elementCallBaseURL, defaultValue: "https://call.element.io", storageType: .userDefaults(store))
-    var elementCallBaseURL: URL
+    let elementCallBaseURL: URL = "https://call.element.io"
+    
+    @UserPreference(key: UserDefaultsKeys.elementCallBaseURLOverride, defaultValue: nil, storageType: .userDefaults(store))
+    var elementCallBaseURLOverride: URL?
     
     // MARK: - Users
     
@@ -272,16 +277,35 @@ final class AppSettings {
     
     // MARK: - Feature Flags
     
-    @UserPreference(key: UserDefaultsKeys.publicSearchEnabled, defaultValue: isDevelopmentBuild, storageType: .volatile)
+    @UserPreference(key: UserDefaultsKeys.publicSearchEnabled, defaultValue: false, storageType: .userDefaults(store))
     var publicSearchEnabled
     
     @UserPreference(key: UserDefaultsKeys.fuzzyRoomListSearchEnabled, defaultValue: false, storageType: .userDefaults(store))
     var fuzzyRoomListSearchEnabled
-        
+    
+    enum SlidingSyncDiscovery: Codable { case proxy, native, forceNative }
+    @UserPreference(key: UserDefaultsKeys.slidingSyncDiscovery, defaultValue: .native, storageType: .userDefaults(store))
+    var slidingSyncDiscovery: SlidingSyncDiscovery
+    
+    @UserPreference(key: UserDefaultsKeys.knockingEnabled, defaultValue: false, storageType: .userDefaults(store))
+    var knockingEnabled
+    
     #endif
     
     // MARK: - Shared
         
-    @UserPreference(key: UserDefaultsKeys.logLevel, defaultValue: TracingConfiguration.LogLevel.info, storageType: .userDefaults(store))
+    @UserPreference(key: UserDefaultsKeys.logLevel, defaultValue: LogLevel.info, storageType: .userDefaults(store))
     var logLevel
+    
+    /// Configuration to enable only signed device isolation mode for  crypto. In this mode only devices signed by their owner will be considered in e2ee rooms.
+    @UserPreference(key: UserDefaultsKeys.enableOnlySignedDeviceIsolationMode, defaultValue: false, storageType: .userDefaults(store))
+    var enableOnlySignedDeviceIsolationMode
+    
+    @UserPreference(key: UserDefaultsKeys.hideTimelineMedia, defaultValue: false, storageType: .userDefaults(store))
+    var hideTimelineMedia
+    
+    @UserPreference(key: UserDefaultsKeys.eventCacheEnabled, defaultValue: false, storageType: .userDefaults(store))
+    var eventCacheEnabled
 }
+
+extension AppSettings: CommonSettingsProtocol { }

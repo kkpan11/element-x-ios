@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import XCTest
@@ -24,6 +15,11 @@ class JoinRoomScreenViewModelTests: XCTestCase {
     
     var context: JoinRoomScreenViewModelType.Context {
         viewModel.context
+    }
+    
+    override func tearDown() {
+        viewModel = nil
+        AppSettings.resetAllSettings()
     }
 
     func testInteraction() async throws {
@@ -52,7 +48,32 @@ class JoinRoomScreenViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.context.alertInfo?.id, .declineInvite)
     }
     
-    private func setupViewModel(throwing: Bool = false) {
+    func testKnockedState() async throws {
+        setupViewModel(knocked: true)
+        
+        try await deferFulfillment(viewModel.context.$viewState) { state in
+            state.mode == .knocked
+        }.fulfill()
+    }
+    
+    func testCancelKnock() async throws {
+        setupViewModel(knocked: true)
+        
+        try await deferFulfillment(viewModel.context.$viewState) { state in
+            state.mode == .knocked
+        }.fulfill()
+        
+        context.send(viewAction: .cancelKnock)
+        XCTAssertEqual(viewModel.context.alertInfo?.id, .cancelKnock)
+        
+        let deferred = deferFulfillment(viewModel.actionsPublisher) { action in
+            action == .dismiss
+        }
+        context.alertInfo?.secondaryButton?.action?()
+        try await deferred.fulfill()
+    }
+    
+    private func setupViewModel(throwing: Bool = false, knocked: Bool = false) {
         let clientProxy = ClientProxyMock(.init())
         
         clientProxy.joinRoomViaReturnValue = throwing ? .failure(.sdkError(ClientProxyMockError.generic)) : .success(())
@@ -63,16 +84,28 @@ class JoinRoomScreenViewModelTests: XCTestCase {
                                                                             topic: nil,
                                                                             avatarURL: nil,
                                                                             memberCount: 0,
-                                                                            isHistoryWorldReadable: false,
+                                                                            isHistoryWorldReadable: nil,
                                                                             isJoined: false,
                                                                             isInvited: false,
                                                                             isPublic: false,
                                                                             canKnock: false))
         
+        if knocked {
+            clientProxy.roomForIdentifierClosure = { _ in
+                let roomProxy = KnockedRoomProxyMock(.init())
+                // to test the cancel knock function
+                roomProxy.cancelKnockUnderlyingReturnValue = .success(())
+                return .knocked(roomProxy)
+            }
+        }
+        
+        ServiceLocator.shared.settings.knockingEnabled = true
+        
         viewModel = JoinRoomScreenViewModel(roomID: "1",
                                             via: [],
+                                            appSettings: ServiceLocator.shared.settings,
                                             clientProxy: clientProxy,
-                                            mediaProvider: MockMediaProvider(),
+                                            mediaProvider: MediaProviderMock(configuration: .init()),
                                             userIndicatorController: ServiceLocator.shared.userIndicatorController)
     }
 }

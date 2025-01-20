@@ -1,17 +1,8 @@
 //
-// Copyright 2023 New Vector Ltd
+// Copyright 2023, 2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Compound
@@ -41,18 +32,15 @@ struct VoiceMessageRecordingButton: View {
         } label: {
             switch mode {
             case .idle:
-                CompoundIcon(\.micOn, size: .medium, relativeTo: .title)
+                CompoundIcon(\.micOn, size: .medium, relativeTo: .compound.headingLG)
                     .foregroundColor(.compound.iconSecondary)
-                    .scaledPadding(10, relativeTo: .title)
+                    .scaledPadding(10, relativeTo: .compound.headingLG)
             case .recording:
-                CompoundIcon(asset: Asset.Images.stopRecording, size: .medium, relativeTo: .title)
+                CompoundIcon(asset: Asset.Images.stopRecording, size: .medium, relativeTo: .compound.headingLG)
                     .foregroundColor(.compound.iconOnSolidPrimary)
-                    .scaledPadding(6, relativeTo: .title)
-                    .background(
-                        Circle()
-                            .foregroundColor(.compound.bgActionPrimaryRest)
-                    )
-                    .scaledPadding(4, relativeTo: .title)
+                    .scaledPadding(6, relativeTo: .compound.headingLG)
+                    .background(.compound.bgActionPrimaryRest, in: Circle())
+                    .scaledPadding(4, relativeTo: .compound.headingLG)
             }
         }
         .buttonStyle(VoiceMessageRecordingButtonStyle())

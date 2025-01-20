@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Compound
@@ -23,6 +14,8 @@ struct UserProfileScreen: View {
     var body: some View {
         Form {
             headerSection
+            
+            verificationSection
         }
         .compoundList()
         .navigationTitle(L10n.screenRoomMemberDetailsTitle)
@@ -30,12 +23,30 @@ struct UserProfileScreen: View {
         .toolbar { toolbar }
         .alert(item: $context.alertInfo)
         .track(screen: .User)
-        .interactiveQuickLook(item: $context.mediaPreviewItem, shouldHideControls: true)
+        .interactiveQuickLook(item: $context.mediaPreviewItem, allowEditing: false)
     }
     
     // MARK: - Private
     
     @ViewBuilder
+    private var headerSection: some View {
+        if let userProfile = context.viewState.userProfile {
+            AvatarHeaderView(user: userProfile,
+                             isVerified: context.viewState.showVerifiedBadge,
+                             avatarSize: .user(on: .memberDetails),
+                             mediaProvider: context.mediaProvider) { url in
+                context.send(viewAction: .displayAvatar(url))
+            } footer: {
+                otherUserFooter
+            }
+        } else {
+            AvatarHeaderView(user: UserProfileProxy(userID: context.viewState.userID),
+                             isVerified: context.viewState.showVerifiedBadge,
+                             avatarSize: .user(on: .memberDetails),
+                             mediaProvider: context.mediaProvider) { }
+        }
+    }
+    
     private var otherUserFooter: some View {
         HStack(spacing: 8) {
             if context.viewState.userProfile != nil, !context.viewState.isOwnUser {
@@ -68,20 +79,15 @@ struct UserProfileScreen: View {
     }
     
     @ViewBuilder
-    private var headerSection: some View {
-        if let userProfile = context.viewState.userProfile {
-            AvatarHeaderView(user: userProfile,
-                             avatarSize: .user(on: .memberDetails),
-                             imageProvider: context.imageProvider) {
-                context.send(viewAction: .displayAvatar)
-            } footer: {
-                otherUserFooter
+    var verificationSection: some View {
+        if context.viewState.showVerificationSection {
+            Section {
+                ListRow(label: .default(title: L10n.commonVerifyIdentity,
+                                        description: L10n.screenRoomMemberDetailsVerifyButtonSubtitle,
+                                        icon: \.lock),
+                        kind: .button { })
+                    .disabled(true)
             }
-        } else {
-            AvatarHeaderView(user: UserProfileProxy(userID: context.viewState.userID),
-                             avatarSize: .user(on: .memberDetails),
-                             imageProvider: context.imageProvider,
-                             footer: { })
         }
     }
     
@@ -100,27 +106,43 @@ struct UserProfileScreen: View {
 // MARK: - Previews
 
 struct UserProfileScreen_Previews: PreviewProvider, TestablePreview {
-    static let otherUserViewModel = makeViewModel(userID: RoomMemberProxyMock.mockDan.userID)
+    static let verifiedUserViewModel = makeViewModel(userID: RoomMemberProxyMock.mockDan.userID)
+    static let otherUserViewModel = makeViewModel(userID: RoomMemberProxyMock.mockAlice.userID)
     static let accountOwnerViewModel = makeViewModel(userID: RoomMemberProxyMock.mockMe.userID)
     
     static var previews: some View {
+        UserProfileScreen(context: verifiedUserViewModel.context)
+            .snapshotPreferences(expect: verifiedUserViewModel.context.$viewState.map { state in
+                state.isVerified != nil
+            })
+            .previewDisplayName("Verified User")
+        
         UserProfileScreen(context: otherUserViewModel.context)
+            .snapshotPreferences(expect: otherUserViewModel.context.$viewState.map { state in
+                state.isVerified != nil
+            })
             .previewDisplayName("Other User")
-            .snapshot(delay: 0.25)
+        
         UserProfileScreen(context: accountOwnerViewModel.context)
+            .snapshotPreferences(expect: accountOwnerViewModel.context.$viewState.map { state in
+                state.isVerified != nil
+            })
             .previewDisplayName("Account Owner")
-            .snapshot(delay: 0.25)
     }
     
     static func makeViewModel(userID: String) -> UserProfileScreenViewModel {
         let clientProxyMock = ClientProxyMock(.init())
+        clientProxyMock.userIdentityForClosure = { userID in
+            let isVerified = userID == RoomMemberProxyMock.mockDan.userID
+            return .success(UserIdentitySDKMock(configuration: .init(isVerified: isVerified)))
+        }
         if userID != RoomMemberProxyMock.mockMe.userID {
             clientProxyMock.directRoomForUserIDReturnValue = .success("roomID")
         }
         return UserProfileScreenViewModel(userID: userID,
                                           isPresentedModally: false,
                                           clientProxy: clientProxyMock,
-                                          mediaProvider: MockMediaProvider(),
+                                          mediaProvider: MediaProviderMock(configuration: .init()),
                                           userIndicatorController: ServiceLocator.shared.userIndicatorController,
                                           analytics: ServiceLocator.shared.analytics)
     }

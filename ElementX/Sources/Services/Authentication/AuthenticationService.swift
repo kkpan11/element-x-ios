@@ -1,17 +1,8 @@
 //
-// Copyright 2022 New Vector Ltd
+// Copyright 2022-2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
@@ -19,51 +10,77 @@ import Foundation
 import MatrixRustSDK
 
 class AuthenticationService: AuthenticationServiceProtocol {
-    private var client: Client?
-    private let sessionDirectory: URL
+    private var client: ClientProtocol?
+    private var sessionDirectories: SessionDirectories
     private let passphrase: String
     
+    private let clientBuilderFactory: AuthenticationClientBuilderFactoryProtocol
     private let userSessionStore: UserSessionStoreProtocol
     private let appSettings: AppSettings
+    private let appHooks: AppHooks
     
     private let homeserverSubject: CurrentValueSubject<LoginHomeserver, Never>
     var homeserver: CurrentValuePublisher<LoginHomeserver, Never> { homeserverSubject.asCurrentValuePublisher() }
+    private(set) var flow: AuthenticationFlow
     
-    init(userSessionStore: UserSessionStoreProtocol, encryptionKeyProvider: EncryptionKeyProviderProtocol, appSettings: AppSettings) {
-        sessionDirectory = .sessionsBaseDirectory.appending(component: UUID().uuidString)
+    init(userSessionStore: UserSessionStoreProtocol,
+         encryptionKeyProvider: EncryptionKeyProviderProtocol,
+         clientBuilderFactory: AuthenticationClientBuilderFactoryProtocol = AuthenticationClientBuilderFactory(),
+         appSettings: AppSettings,
+         appHooks: AppHooks) {
+        sessionDirectories = .init()
         passphrase = encryptionKeyProvider.generateKey().base64EncodedString()
+        self.clientBuilderFactory = clientBuilderFactory
         self.userSessionStore = userSessionStore
         self.appSettings = appSettings
+        self.appHooks = appHooks
         
-        homeserverSubject = .init(LoginHomeserver(address: appSettings.defaultHomeserverAddress,
-                                                  loginMode: .unknown))
+        // When updating these, don't forget to update the reset method too.
+        homeserverSubject = .init(LoginHomeserver(address: appSettings.defaultHomeserverAddress, loginMode: .unknown))
+        flow = .login
     }
     
     // MARK: - Public
     
-    func configure(for homeserverAddress: String) async -> Result<Void, AuthenticationServiceError> {
+    func configure(for homeserverAddress: String, flow: AuthenticationFlow) async -> Result<Void, AuthenticationServiceError> {
         do {
             var homeserver = LoginHomeserver(address: homeserverAddress, loginMode: .unknown)
             
-            let client = try await makeClientBuilder().serverNameOrHomeserverUrl(serverNameOrUrl: homeserverAddress).build()
+            let client = try await makeClientBuilder().build(homeserverAddress: homeserverAddress)
             let loginDetails = await client.homeserverLoginDetails()
+            let elementWellKnown = await client.getElementWellKnown()
             
-            if loginDetails.supportsOidcLogin() {
-                homeserver.loginMode = .oidc
+            MXLog.info("Sliding sync: \(client.slidingSyncVersion())")
+            
+            homeserver.loginMode = if loginDetails.supportsOidcLogin() {
+                .oidc
             } else if loginDetails.supportsPasswordLogin() {
-                homeserver.loginMode = .password
+                .password
             } else {
-                homeserver.loginMode = .unsupported
+                .unsupported
+            }
+            
+            homeserver.registrationHelperURL = switch elementWellKnown {
+            case .success(let wellKnown): wellKnown.registrationHelperUrl.flatMap(URL.init)
+            case .failure: nil
+            }
+            
+            if flow == .login, homeserver.loginMode == .unsupported {
+                return .failure(.loginNotSupported)
+            }
+            if flow == .register, !homeserver.supportsRegistration {
+                return .failure(.registrationNotSupported)
             }
             
             self.client = client
+            self.flow = flow
             homeserverSubject.send(homeserver)
             return .success(())
         } catch ClientBuildError.WellKnownDeserializationError(let error) {
             MXLog.error("The user entered a server with an invalid well-known file: \(error)")
             return .failure(.invalidWellKnown(error))
-        } catch ClientBuildError.SlidingSyncNotAvailable {
-            MXLog.info("User entered a homeserver that isn't configured for sliding sync.")
+        } catch ClientBuildError.SlidingSyncVersion(let error) {
+            MXLog.info("User entered a homeserver that isn't configured for sliding sync: \(error)")
             return .failure(.slidingSyncNotAvailable)
         } catch {
             MXLog.error("Failed configuring a server: \(error)")
@@ -74,7 +91,7 @@ class AuthenticationService: AuthenticationServiceProtocol {
     func urlForOIDCLogin() async -> Result<OIDCAuthorizationDataProxy, AuthenticationServiceError> {
         guard let client else { return .failure(.oidcError(.urlFailure)) }
         do {
-            let oidcData = try await client.urlForOidcLogin(oidcConfiguration: appSettings.oidcConfiguration.rustValue)
+            let oidcData = try await client.urlForOidc(oidcConfiguration: appSettings.oidcConfiguration.rustValue, prompt: .consent)
             return .success(OIDCAuthorizationDataProxy(underlyingData: oidcData))
         } catch {
             MXLog.error("Failed to get URL for OIDC login: \(error)")
@@ -85,7 +102,7 @@ class AuthenticationService: AuthenticationServiceProtocol {
     func abortOIDCLogin(data: OIDCAuthorizationDataProxy) async {
         guard let client else { return }
         MXLog.info("Aborting OIDC login.")
-        await client.abortOidcLogin(authorizationData: data.underlyingData)
+        await client.abortOidcAuth(authorizationData: data.underlyingData)
     }
     
     func loginWithOIDCCallback(_ callbackURL: URL, data: OIDCAuthorizationDataProxy) async -> Result<UserSessionProtocol, AuthenticationServiceError> {
@@ -119,10 +136,6 @@ class AuthenticationService: AuthenticationServiceProtocol {
             // FIXME: How about we make a proper type in the FFI? 😅
             guard let error = error as? ClientError else { return .failure(.failedLoggingIn) }
             
-            if error.isElementWaitlist {
-                return .failure(.isOnWaitlist)
-            }
-            
             switch error.code {
             case .forbidden:
                 return .failure(.invalidCredentials)
@@ -134,24 +147,68 @@ class AuthenticationService: AuthenticationServiceProtocol {
         }
     }
     
-    // MARK: - Private
-    
-    private func makeClientBuilder() -> ClientBuilder {
-        ClientBuilder
-            .baseBuilder(httpProxy: appSettings.websiteURL.globalProxy,
-                         slidingSyncProxy: appSettings.slidingSyncProxyURL,
-                         sessionDelegate: userSessionStore.clientSessionDelegate)
-            .sessionPath(path: sessionDirectory.path(percentEncoded: false))
-            .passphrase(passphrase: passphrase)
-            .requiresSlidingSync()
+    func completeWebRegistration(using credentials: WebRegistrationCredentials) async -> Result<any UserSessionProtocol, AuthenticationServiceError> {
+        guard let client else { return .failure(.failedLoggingIn) }
+        let session = Session(accessToken: credentials.accessToken,
+                              refreshToken: nil,
+                              userId: credentials.userID,
+                              deviceId: credentials.deviceID,
+                              homeserverUrl: client.homeserver(),
+                              oidcData: nil,
+                              slidingSyncVersion: client.slidingSyncVersion())
+        
+        do {
+            try await client.restoreSession(session: session)
+            return await userSession(for: client)
+        } catch {
+            MXLog.error("Failed restoring the client using the provided credentials.")
+            return .failure(.failedUsingWebCredentials)
+        }
     }
     
-    private func userSession(for client: Client) async -> Result<UserSessionProtocol, AuthenticationServiceError> {
-        switch await userSessionStore.userSession(for: client, sessionDirectory: sessionDirectory, passphrase: passphrase) {
+    func reset() {
+        homeserverSubject.send(LoginHomeserver(address: appSettings.defaultHomeserverAddress, loginMode: .unknown))
+        flow = .login
+        client = nil
+    }
+    
+    // MARK: - Private
+    
+    private func makeClientBuilder() -> AuthenticationClientBuilderProtocol {
+        // Use a fresh session directory each time the user enters a different server
+        // so that caches (e.g. server versions) are always fresh for the new server.
+        rotateSessionDirectory()
+        
+        return clientBuilderFactory.makeBuilder(sessionDirectories: sessionDirectories,
+                                                passphrase: passphrase,
+                                                clientSessionDelegate: userSessionStore.clientSessionDelegate,
+                                                appSettings: appSettings,
+                                                appHooks: appHooks)
+    }
+    
+    private func rotateSessionDirectory() {
+        sessionDirectories.delete()
+        sessionDirectories = .init()
+    }
+    
+    private func userSession(for client: ClientProtocol) async -> Result<UserSessionProtocol, AuthenticationServiceError> {
+        switch await userSessionStore.userSession(for: client, sessionDirectories: sessionDirectories, passphrase: passphrase) {
         case .success(let clientProxy):
             return .success(clientProxy)
         case .failure:
             return .failure(.failedLoggingIn)
         }
+    }
+}
+
+// MARK: - Mocks
+
+extension AuthenticationService {
+    static var mock: AuthenticationService {
+        AuthenticationService(userSessionStore: UserSessionStoreMock(configuration: .init()),
+                              encryptionKeyProvider: EncryptionKeyProvider(),
+                              clientBuilderFactory: AuthenticationClientBuilderFactoryMock(configuration: .init()),
+                              appSettings: ServiceLocator.shared.settings,
+                              appHooks: AppHooks())
     }
 }

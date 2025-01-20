@@ -1,17 +1,8 @@
 //
-// Copyright 2023 New Vector Ltd
+// Copyright 2023, 2024 New Vector Ltd.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// Please see LICENSE files in the repository root for full details.
 //
 
 import OSLog
@@ -25,7 +16,7 @@ class Signposter {
     private let logger = Logger(subsystem: subsystem, category: category)
     
     /// Signpost name constants.
-    private enum Name {
+    enum Name {
         static let login: StaticString = "Login"
         static let firstSync: StaticString = "FirstSync"
         static let firstRooms: StaticString = "FirstRooms"
@@ -35,27 +26,32 @@ class Signposter {
         static let appStarted = "AppStarted"
         
         static let homeserver = "homeserver"
-        static let isDevelopmentBuild = "isDevelopmentBuild"
     }
     
     static let subsystem = "ElementX"
     static let category = "PerformanceTests"
     
-    private var appStartupSpan: Span
+    // MARK: - App Startup
     
-    init(isDevelopmentBuild: Bool) {
-        appStartupSpan = SentrySDK.startTransaction(name: Name.appStartup, operation: Name.appStarted)
-        appStartupSpan.setData(value: isDevelopmentBuild, key: Name.isDevelopmentBuild)
+    private var appStartupTransaction: Span?
+    
+    // We have a manual start method because we need to configure the ServiceLocator *before* we configure
+    // Sentry but this class is created in the AnalyticsService and so spans and transactions are dropped
+    // until Sentry has been configured. Therefore doing this in the init doesn't work.
+    func start() {
+        appStartupTransaction = SentrySDK.startTransaction(name: Name.appStartup, operation: Name.appStarted)
     }
     
     // MARK: - Login
     
     private var loginState: OSSignpostIntervalState?
+    private var loginTransaction: Span?
     private var loginSpan: Span?
     
     func beginLogin() {
         loginState = signposter.beginInterval(Name.login)
-        loginSpan = appStartupSpan.startChild(operation: "\(Name.login)")
+        loginTransaction = SentrySDK.startTransaction(name: "\(Name.login)", operation: "\(Name.login)")
+        loginSpan = appStartupTransaction?.startChild(operation: "\(Name.login)", description: "\(Name.login)")
     }
     
     func endLogin() {
@@ -65,55 +61,68 @@ class Signposter {
         }
         
         signposter.endInterval(Name.login, loginState)
+        loginTransaction?.finish()
         loginSpan?.finish()
         
         self.loginState = nil
+        loginTransaction = nil
         loginSpan = nil
     }
     
     // MARK: - FirstSync
     
     private var firstSyncState: OSSignpostIntervalState?
+    private var firstSyncTransaction: Span?
     private var firstSyncSpan: Span?
     
     func beginFirstSync(serverName: String) {
-        appStartupSpan.setTag(value: serverName, key: Name.homeserver)
+        appStartupTransaction?.setTag(value: serverName, key: Name.homeserver)
         
         firstSyncState = signposter.beginInterval(Name.firstSync)
-        firstSyncSpan = appStartupSpan.startChild(operation: "\(Name.firstSync)")
+        
+        firstSyncTransaction = SentrySDK.startTransaction(name: "\(Name.firstSync)", operation: "\(Name.firstSync)")
+        firstSyncTransaction?.setTag(value: serverName, key: Name.homeserver)
+        
+        firstSyncSpan = appStartupTransaction?.startChild(operation: "\(Name.firstSync)", description: "\(Name.firstSync)")
     }
     
     func endFirstSync() {
         guard let firstSyncState else { return }
         
         signposter.endInterval(Name.firstSync, firstSyncState)
+        firstSyncTransaction?.finish()
         firstSyncSpan?.finish()
         
         self.firstSyncState = nil
+        firstSyncTransaction = nil
         firstSyncSpan = nil
     }
     
     // MARK: - FirstRooms
     
     private var firstRoomsState: OSSignpostIntervalState?
+    private var firstRoomsTransaction: Span?
     private var firstRoomsSpan: Span?
     
     func beginFirstRooms() {
         firstRoomsState = signposter.beginInterval(Name.firstRooms)
-        firstRoomsSpan = appStartupSpan.startChild(operation: "\(Name.firstRooms)")
+        firstRoomsTransaction = SentrySDK.startTransaction(name: "\(Name.firstRooms)", operation: "\(Name.firstRooms)")
+        firstRoomsSpan = appStartupTransaction?.startChild(operation: "\(Name.firstRooms)", description: "\(Name.firstRooms)")
     }
     
     func endFirstRooms() {
         defer {
-            appStartupSpan.finish()
+            appStartupTransaction?.finish()
         }
         
         guard let firstRoomsState else { return }
         
         signposter.endInterval(Name.firstRooms, firstRoomsState)
+        firstRoomsTransaction?.finish()
         firstRoomsSpan?.finish()
         
         self.firstRoomsState = nil
+        firstRoomsTransaction = nil
         firstRoomsSpan = nil
     }
     
