@@ -1,24 +1,20 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
-import Combine
-import XCTest
-
 @testable import ElementX
+import Testing
 
 @MainActor
-final class CompletionSuggestionServiceTests: XCTestCase {
-    private var cancellables = Set<AnyCancellable>()
+struct CompletionSuggestionServiceTests {
+    // MARK: User Suggestions
     
-    override func setUp() {
-        cancellables.removeAll()
-    }
-    
-    func testUserSuggestions() async throws {
+    @Test
+    func userSuggestions() async throws {
         let alice: RoomMemberProxyMock = .mockAlice
         let members: [RoomMemberProxyMock] = [alice, .mockBob, .mockCharlie, .mockMe]
         let roomProxyMock = JoinedRoomProxyMock(.init(id: "roomID", name: "test", members: members))
@@ -57,14 +53,19 @@ final class CompletionSuggestionServiceTests: XCTestCase {
         try await deferred.fulfill()
     }
     
-    func testUserSuggestionsIncludingAllUsers() async throws {
+    @Test
+    func userSuggestionsIncludingAllUsers() async throws {
         let alice: RoomMemberProxyMock = .mockAlice
         let members: [RoomMemberProxyMock] = [alice, .mockBob, .mockCharlie, .mockMe]
-        let roomProxyMock = JoinedRoomProxyMock(.init(id: "roomID", name: "test", members: members, canUserTriggerRoomNotification: true))
+        let roomProxyMock = JoinedRoomProxyMock(.init(id: "roomID",
+                                                      name: "test",
+                                                      members: members,
+                                                      powerLevelsConfiguration: .init(canUserTriggerRoomNotification: true)))
+        
         let roomSummaryProvider = RoomSummaryProviderMock(.init(state: .loaded(.mockRooms)))
         let service = CompletionSuggestionService(roomProxy: roomProxyMock,
                                                   roomListPublisher: roomSummaryProvider.roomListPublisher.eraseToAnyPublisher())
-                
+        
         var deferred = deferFulfillment(service.suggestionsPublisher) { suggestions in
             suggestions == []
         }
@@ -84,15 +85,19 @@ final class CompletionSuggestionServiceTests: XCTestCase {
         try await deferred.fulfill()
     }
     
-    func testUserSuggestionsWithEmptyText() async throws {
+    @Test
+    func userSuggestionsWithEmptyText() async throws {
         let alice: RoomMemberProxyMock = .mockAlice
         let bob: RoomMemberProxyMock = .mockBob
         let members: [RoomMemberProxyMock] = [alice, bob, .mockMe]
-        let roomProxyMock = JoinedRoomProxyMock(.init(id: "roomID", name: "test", members: members, canUserTriggerRoomNotification: true))
+        let roomProxyMock = JoinedRoomProxyMock(.init(id: "roomID",
+                                                      name: "test",
+                                                      members: members,
+                                                      powerLevelsConfiguration: .init(canUserTriggerRoomNotification: true)))
         let roomSummaryProvider = RoomSummaryProviderMock(.init(state: .loaded(.mockRooms)))
         let service = CompletionSuggestionService(roomProxy: roomProxyMock,
                                                   roomListPublisher: roomSummaryProvider.roomListPublisher.eraseToAnyPublisher())
-                
+        
         var deferred = deferFulfillment(service.suggestionsPublisher) { suggestions in
             suggestions == []
         }
@@ -117,7 +122,8 @@ final class CompletionSuggestionServiceTests: XCTestCase {
         try await deferred.fulfill()
     }
     
-    func testUserSuggestionInDifferentMessagePositions() async throws {
+    @Test
+    func userSuggestionInDifferentMessagePositions() async throws {
         let alice: RoomMemberProxyMock = .mockAlice
         let members: [RoomMemberProxyMock] = [alice, .mockBob, .mockCharlie, .mockMe]
         let roomProxyMock = JoinedRoomProxyMock(.init(name: "test", members: members))
@@ -144,7 +150,8 @@ final class CompletionSuggestionServiceTests: XCTestCase {
         try await deferred.fulfill()
     }
     
-    func testUserSuggestionWithMultipleMentionSymbol() async throws {
+    @Test
+    func userSuggestionWithMultipleMentionSymbol() async throws {
         let alice: RoomMemberProxyMock = .mockAlice
         let bob: RoomMemberProxyMock = .mockBob
         let members: [RoomMemberProxyMock] = [alice, bob, .mockCharlie, .mockMe]
@@ -172,7 +179,42 @@ final class CompletionSuggestionServiceTests: XCTestCase {
         try await deffered.fulfill()
     }
     
-    func testRoomSuggestions() async throws {
+    @Test
+    func userSuggestionRefreshesMembers() async throws {
+        let members: [RoomMemberProxyMock] = [.mockAlice, .mockBob, .mockMe]
+        let roomProxyMock = JoinedRoomProxyMock(.init(id: "roomID", name: "test", members: members))
+        let roomSummaryProvider = RoomSummaryProviderMock(.init(state: .loaded(.mockRooms)))
+        
+        let (refreshesStream, refreshesContinuation) = AsyncStream<Void>.makeStream()
+        roomProxyMock.updateMembersClosure = { refreshesContinuation.yield() }
+        
+        let service = CompletionSuggestionService(roomProxy: roomProxyMock,
+                                                  roomListPublisher: roomSummaryProvider.roomListPublisher.eraseToAnyPublisher())
+        #expect(!roomProxyMock.updateMembersCalled)
+        
+        // Beginning a mention refreshes the members once…
+        var deferred = deferFulfillment(refreshesStream) { _ in true }
+        service.setSuggestionTrigger(.init(type: .user, text: "", range: .init()))
+        try await deferred.fulfill()
+        #expect(roomProxyMock.updateMembersCallsCount == 1)
+        
+        // …but typing further within the same mention doesn't refresh again.
+        service.setSuggestionTrigger(.init(type: .user, text: "a", range: .init()))
+        service.setSuggestionTrigger(.init(type: .user, text: "al", range: .init()))
+        #expect(roomProxyMock.updateMembersCallsCount == 1)
+        
+        // Clearing and starting a new mention refreshes a second time.
+        deferred = deferFulfillment(refreshesStream) { _ in true }
+        service.setSuggestionTrigger(nil)
+        service.setSuggestionTrigger(.init(type: .user, text: "", range: .init()))
+        try await deferred.fulfill()
+        #expect(roomProxyMock.updateMembersCallsCount == 2)
+    }
+    
+    // MARK: Room Suggestions
+    
+    @Test
+    func roomSuggestions() async throws {
         let alice: RoomMemberProxyMock = .mockAlice
         // We keep the users in the tests since they should not appear in the suggestions when using the room trigger
         let members: [RoomMemberProxyMock] = [alice, .mockBob, .mockCharlie, .mockMe]
@@ -245,7 +287,8 @@ final class CompletionSuggestionServiceTests: XCTestCase {
         try await deferred.fulfill()
     }
     
-    func testRoomSuggestionInDifferentMessagePositions() async throws {
+    @Test
+    func roomSuggestionInDifferentMessagePositions() async throws {
         let alice: RoomMemberProxyMock = .mockAlice
         // We keep the users in the tests since they should not appear in the suggestions when using the room trigger
         let members: [RoomMemberProxyMock] = [alice, .mockBob, .mockCharlie, .mockMe]
@@ -294,7 +337,8 @@ final class CompletionSuggestionServiceTests: XCTestCase {
         try await deferred.fulfill()
     }
     
-    func testRoomSuggestionWithMultipleMentionSymbol() async throws {
+    @Test
+    func roomSuggestionWithMultipleMentionSymbol() async throws {
         let alice: RoomMemberProxyMock = .mockAlice
         // We keep the users in the tests since they should not appear in the suggestions when using the room trigger
         let members: [RoomMemberProxyMock] = [alice, .mockBob, .mockCharlie, .mockMe]
@@ -344,7 +388,10 @@ final class CompletionSuggestionServiceTests: XCTestCase {
         try await deffered.fulfill()
     }
     
-    func testSuggestionsWithMultipleDifferentTriggers() async throws {
+    // MARK: Common
+    
+    @Test
+    func suggestionsWithMultipleDifferentTriggers() async throws {
         let alice: RoomMemberProxyMock = .mockAlice
         // We keep the users in the tests since they should not appear in the suggestions when using the room trigger
         let members: [RoomMemberProxyMock] = [alice, .mockBob, .mockCharlie, .mockMe]
@@ -373,7 +420,8 @@ final class CompletionSuggestionServiceTests: XCTestCase {
         try await deffered.fulfill()
     }
     
-    func testSuggestionsContainingNonAlphanumericCharacters() async throws {
+    @Test
+    func suggestionsContainingNonAlphanumericCharacters() async throws {
         let alice: RoomMemberProxyMock = .mockAlice
         // We keep the users in the tests since they should not appear in the suggestions when using the room trigger
         let members: [RoomMemberProxyMock] = [alice, .mockBob, .mockCharlie, .mockMe]

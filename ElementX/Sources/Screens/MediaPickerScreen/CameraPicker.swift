@@ -1,5 +1,6 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 // Please see LICENSE files in the repository root for full details.
@@ -23,16 +24,18 @@ struct CameraPicker: UIViewControllerRepresentable {
     private let userIndicatorController: UserIndicatorControllerProtocol
     private let callback: (CameraPickerAction) -> Void
     
-    init(userIndicatorController: UserIndicatorControllerProtocol, callback: @escaping (CameraPickerAction) -> Void) {
+    init(userIndicatorController: UserIndicatorControllerProtocol,
+         callback: @escaping (CameraPickerAction) -> Void) {
         self.userIndicatorController = userIndicatorController
         self.callback = callback
     }
-
+    
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let imagePicker = UIImagePickerController()
         imagePicker.sourceType = .camera
         imagePicker.allowsEditing = false
         imagePicker.delegate = context.coordinator
+        imagePicker.videoQuality = .typeHigh
         
         if let mediaTypes = UIImagePickerController.availableMediaTypes(for: .camera) {
             imagePicker.mediaTypes = mediaTypes

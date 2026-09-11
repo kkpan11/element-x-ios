@@ -1,7 +1,8 @@
 //
-// Copyright 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2024-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -10,19 +11,22 @@ import Foundation
 import SwiftState
 
 enum OnboardingFlowCoordinatorAction {
-    case logout
+    case requestPresentation(animated: Bool)
+    case dismiss
+    case logoutConfirmed
 }
 
 class OnboardingFlowCoordinator: FlowCoordinatorProtocol {
     private let userSession: UserSessionProtocol
     private let appLockService: AppLockServiceProtocol
-    private let analyticsService: AnalyticsService
+    private let analyticsService: AnalyticsServiceProtocol
+    private let appMediator: AppMediatorProtocol
     private let appSettings: AppSettings
+    private let appHooks: AppHooks
     private let notificationManager: NotificationManagerProtocol
-    private let rootNavigationStackCoordinator: NavigationStackCoordinator
     private let userIndicatorController: UserIndicatorControllerProtocol
     private let windowManager: WindowManagerProtocol
-    private let isNewLogin: Bool
+    private var isNewLogin: Bool
     
     private var navigationStackCoordinator: NavigationStackCoordinator!
     
@@ -56,26 +60,22 @@ class OnboardingFlowCoordinator: FlowCoordinatorProtocol {
     
     private var verificationStateCancellable: AnyCancellable?
     
-    init(userSession: UserSessionProtocol,
+    init(isNewLogin: Bool,
          appLockService: AppLockServiceProtocol,
-         analyticsService: AnalyticsService,
-         appSettings: AppSettings,
-         notificationManager: NotificationManagerProtocol,
          navigationStackCoordinator: NavigationStackCoordinator,
-         userIndicatorController: UserIndicatorControllerProtocol,
-         windowManager: WindowManagerProtocol,
-         isNewLogin: Bool) {
-        self.userSession = userSession
-        self.appLockService = appLockService
-        self.analyticsService = analyticsService
-        self.appSettings = appSettings
-        self.notificationManager = notificationManager
-        self.userIndicatorController = userIndicatorController
-        self.windowManager = windowManager
+         flowParameters: CommonFlowParameters) {
         self.isNewLogin = isNewLogin
+        userSession = flowParameters.userSession
+        self.appLockService = appLockService
+        analyticsService = flowParameters.analytics
+        appMediator = flowParameters.appMediator
+        appSettings = flowParameters.appSettings
+        appHooks = flowParameters.appHooks
+        notificationManager = flowParameters.notificationManager
+        userIndicatorController = flowParameters.userIndicatorController
+        windowManager = flowParameters.windowManager
         
-        rootNavigationStackCoordinator = navigationStackCoordinator
-        self.navigationStackCoordinator = NavigationStackCoordinator()
+        self.navigationStackCoordinator = navigationStackCoordinator
         
         stateMachine = .init(state: .initial)
         
@@ -107,13 +107,13 @@ class OnboardingFlowCoordinator: FlowCoordinatorProtocol {
         return isNewLogin || requiresVerification || requiresAppLockSetup || requiresAnalyticsSetup || requiresNotificationsSetup
     }
     
-    func start() {
+    func start(animated: Bool) {
         guard shouldStart else {
             fatalError("This flow coordinator shouldn't have been started")
         }
         
-        rootNavigationStackCoordinator.setFullScreenCoverCoordinator(navigationStackCoordinator, animated: !isNewLogin)
-
+        actionsSubject.send(.requestPresentation(animated: !isNewLogin))
+        
         stateMachine.tryEvent(.next)
     }
     
@@ -203,7 +203,7 @@ class OnboardingFlowCoordinator: FlowCoordinatorProtocol {
                 
             case (.notificationPermissions, _, _, _, _):
                 return .finished
-            
+                
             default:
                 return nil
             }
@@ -224,7 +224,9 @@ class OnboardingFlowCoordinator: FlowCoordinatorProtocol {
             case (_, _, .notificationPermissions):
                 presentNotificationPermissionsScreen()
             case (_, _, .finished):
-                rootNavigationStackCoordinator.setFullScreenCoverCoordinator(nil)
+                isNewLogin = false
+                appSettings.hasSignedInBefore = true
+                actionsSubject.send(.dismiss)
                 stateMachine.tryState(.initial)
             case (.finished, _, .initial):
                 break
@@ -263,8 +265,8 @@ class OnboardingFlowCoordinator: FlowCoordinatorProtocol {
                 stateMachine.tryEvent(.nextSkippingIdentityConfirmed)
             case .reset:
                 startEncryptionResetFlow()
-            case .logout:
-                actionsSubject.send(.logout)
+            case .logoutConfirmed:
+                actionsSubject.send(.logoutConfirmed)
             }
         }
         .store(in: &cancellables)
@@ -298,10 +300,11 @@ class OnboardingFlowCoordinator: FlowCoordinatorProtocol {
     
     private func presentRecoveryKeyScreen() {
         let parameters = SecureBackupRecoveryKeyScreenCoordinatorParameters(secureBackupController: userSession.clientProxy.secureBackupController,
-                                                                            userIndicatorController: ServiceLocator.shared.userIndicatorController,
+                                                                            userIndicatorController: userIndicatorController,
                                                                             isModallyPresented: false)
         
-        let coordinator = SecureBackupRecoveryKeyScreenCoordinator(parameters: parameters)
+        let coordinator = appHooks.recoveryKeyScreenHook.makeCoordinator(parameters: parameters,
+                                                                         homeserver: userSession.clientProxy.homeserver)
         
         coordinator.actions
             .sink { action in
@@ -318,6 +321,9 @@ class OnboardingFlowCoordinator: FlowCoordinatorProtocol {
     private func startEncryptionResetFlow() {
         let resetNavigationStackCoordinator = NavigationStackCoordinator()
         let coordinator = EncryptionResetFlowCoordinator(parameters: .init(userSession: userSession,
+                                                                           appMediator: appMediator,
+                                                                           appSettings: appSettings,
+                                                                           appHooks: appHooks,
                                                                            userIndicatorController: userIndicatorController,
                                                                            navigationStackCoordinator: resetNavigationStackCoordinator,
                                                                            windowManger: windowManager))
@@ -343,7 +349,7 @@ class OnboardingFlowCoordinator: FlowCoordinatorProtocol {
     }
     
     private func presentIdentityConfirmedScreen() {
-        let coordinator = IdentityConfirmedScreenCoordinator(parameters: .init())
+        let coordinator = IdentityConfirmedScreenCoordinator()
         coordinator.actionsPublisher
             .sink { [weak self] action in
                 guard let self else { return }
@@ -377,7 +383,7 @@ class OnboardingFlowCoordinator: FlowCoordinatorProtocol {
         appLockFlowCoordinator = coordinator
         coordinator.start()
     }
-
+    
     private func presentAnalyticsPromptScreen() {
         let coordinator = AnalyticsPromptScreenCoordinator(analytics: analyticsService, termsURL: appSettings.analyticsTermsURL)
         

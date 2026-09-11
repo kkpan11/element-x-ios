@@ -1,5 +1,6 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 // Please see LICENSE files in the repository root for full details.
@@ -12,9 +13,15 @@ import SwiftUI
 struct BugReportScreen: View {
     @State private var selectedScreenshot: PhotosPickerItem?
     
-    @ObservedObject var context: BugReportScreenViewModel.Context
+    @Bindable var context: BugReportScreenViewModel.Context
     
-    var photosPickerTitle: String { context.viewState.screenshot == nil ? L10n.screenBugReportAttachScreenshot : L10n.screenBugReportEditScreenshot }
+    var canSendLogFiles: Bool {
+        context.viewState.canSendLogFiles
+    }
+    
+    var photosPickerTitle: String {
+        context.viewState.screenshot == nil ? L10n.screenBugReportAttachScreenshot : L10n.screenBugReportEditScreenshot
+    }
     
     var body: some View {
         Form {
@@ -56,18 +63,26 @@ struct BugReportScreen: View {
     
     private var sendLogsSection: some View {
         Section {
-            ListRow(label: .plain(title: L10n.screenBugReportIncludeLogs),
-                    kind: .toggle($context.sendingLogsEnabled))
-                .accessibilityIdentifier(A11yIdentifiers.bugReportScreen.sendLogs)
+            if canSendLogFiles {
+                ListRow(label: .plain(title: L10n.screenBugReportIncludeLogs),
+                        kind: .toggle($context.sendingLogsEnabled))
+                    .accessibilityIdentifier(A11yIdentifiers.bugReportScreen.sendLogs)
+            }
             ListRow(label: .plain(title: L10n.screenBugReportViewLogs),
                     kind: .navigationLink { context.send(viewAction: .viewLogs) })
                 .accessibilityIdentifier(A11yIdentifiers.bugReportScreen.sendLogs)
         } footer: {
-            Text(L10n.screenBugReportLogsDescription)
-                .compoundListSectionFooter()
+            if canSendLogFiles {
+                Text(L10n.screenBugReportLogsDescription)
+                    .compoundListSectionFooter()
+            } else {
+                Label(L10n.screenBugReportIncludeLogsError, icon: \.errorSolid, iconSize: .xSmall, relativeTo: .compound.bodySM)
+                    .foregroundStyle(.compound.textCriticalPrimary)
+                    .compoundListSectionFooter()
+            }
         }
     }
-
+    
     private var canContactSection: some View {
         Section {
             ListRow(label: .plain(title: L10n.screenBugReportContactMeTitle),
@@ -78,15 +93,17 @@ struct BugReportScreen: View {
                 .compoundListSectionFooter()
         }
     }
-
-    @ViewBuilder
+    
     private var attachScreenshotSection: some View {
         Section {
             ListRow(kind: .custom {
                 PhotosPicker(selection: $selectedScreenshot,
                              matching: .screenshots,
                              photoLibrary: .shared()) {
-                    ListRowLabel.plain(title: photosPickerTitle)
+                    // The label builder isn't isolated in SwiftUI's signature but is only ever called on the main actor.
+                    MainActor.assumeIsolated {
+                        ListRowLabel.plain(title: photosPickerTitle)
+                    }
                 }
             })
             .accessibilityIdentifier(A11yIdentifiers.bugReportScreen.attachScreenshot)
@@ -98,6 +115,7 @@ struct BugReportScreen: View {
                     .frame(width: 100)
                     .cornerRadius(4)
                     .accessibilityIdentifier(A11yIdentifiers.bugReportScreen.screenshot)
+                    .accessibilityLabel(L10n.screenBugReportA11yScreenshot)
                     .overlay(alignment: .topTrailing) {
                         Button { context.send(viewAction: .removeScreenshot) } label: {
                             CompoundIcon(\.close, size: .small, relativeTo: .compound.bodyMD)
@@ -140,7 +158,7 @@ struct BugReportScreen: View {
 
 struct BugReportScreen_Previews: PreviewProvider, TestablePreview {
     static var previews: some View {
-        NavigationStack {
+        ElementNavigationStack {
             let clientProxy = ClientProxyMock(.init(userID: "@mock:client.com", roomSummaryProvider: RoomSummaryProviderMock(.init(state: .loaded(.mockRooms)))))
             BugReportScreen(context: BugReportScreenViewModel(bugReportService: BugReportServiceMock(.init()),
                                                               clientProxy: clientProxy,
@@ -149,7 +167,7 @@ struct BugReportScreen_Previews: PreviewProvider, TestablePreview {
         }
         .previewDisplayName("Without Screenshot")
         
-        NavigationStack {
+        ElementNavigationStack {
             let clientProxy = ClientProxyMock(.init(userID: "@mock:client.com", roomSummaryProvider: RoomSummaryProviderMock(.init(state: .loaded(.mockRooms)))))
             BugReportScreen(context: BugReportScreenViewModel(bugReportService: BugReportServiceMock(.init()),
                                                               clientProxy: clientProxy,

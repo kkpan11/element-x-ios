@@ -1,23 +1,28 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
 import MatrixRustSDK
 
-final class RoomMemberProxy: RoomMemberProxyProtocol {
+final nonisolated class RoomMemberProxy: RoomMemberProxyProtocol {
     private let member: RoomMember
     
     init(member: RoomMember) {
         self.member = member
     }
     
-    var userID: String { member.userId }
+    var userID: String {
+        member.userId
+    }
     
-    var displayName: String? { member.displayName }
+    var displayName: String? {
+        member.displayName
+    }
     
     var disambiguatedDisplayName: String? {
         guard let displayName else {
@@ -27,15 +32,32 @@ final class RoomMemberProxy: RoomMemberProxyProtocol {
         return member.isNameAmbiguous ? "\(displayName) (\(userID))" : displayName
     }
     
-    var avatarURL: URL? { member.avatarUrl.flatMap(URL.init(string:)) }
+    var avatarURL: URL? {
+        member.avatarUrl.flatMap(URL.init(string:))
+    }
     
-    var membership: MembershipState { member.membership }
+    var status: UserStatus {
+        UserStatus(rustStatus: member.status, rustCall: member.call)
+    }
     
-    var membershipChangeReason: String? { member.membershipChangeReason }
+    var membership: MembershipState {
+        member.membership
+    }
     
-    var isIgnored: Bool { member.isIgnored }
+    var membershipChangeReason: String? {
+        member.membershipChangeReason
+    }
     
-    var powerLevel: Int { Int(member.powerLevel) }
+    var isIgnored: Bool {
+        member.isIgnored
+    }
     
-    var role: RoomMemberRole { member.suggestedRoleForPowerLevel }
+    var powerLevel: RoomPowerLevel {
+        .init(rustPowerLevel: member.powerLevel)
+    }
+    
+    // periphery:ignore - might be useful to have
+    var isServiceMember: Bool {
+        member.isServiceMember
+    }
 }

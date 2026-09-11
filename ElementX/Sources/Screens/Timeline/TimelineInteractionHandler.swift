@@ -1,7 +1,8 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -11,37 +12,40 @@ import UIKit
 enum TimelineInteractionHandlerAction {
     case composer(action: TimelineComposerAction)
     
-    case displayEmojiPicker(itemID: TimelineItemIdentifier, selectedEmojis: Set<String>)
+    case displayEmojiPicker(selectedEmojis: Set<String>, continuation: EmojiPickerScreenContinuation)
     case displayReportContent(itemID: TimelineItemIdentifier, senderID: String)
     case displayMessageForwarding(itemID: TimelineItemIdentifier)
-    case displayMediaUploadPreviewScreen(url: URL)
-    case displayPollForm(mode: PollFormMode)
+    case displayMediaUploadPreviewScreen(mediaURLs: [URL])
+    case displayEditPollForm(eventID: String, poll: Poll)
     
     case showActionMenu(TimelineItemActionMenuInfo)
+    case showRedactConfirmation(itemID: TimelineItemIdentifier)
     case showDebugInfo(TimelineItemDebugInfo)
     
     case displayAudioRecorderPermissionError
     case displayErrorToast(String)
     
     case viewInRoomTimeline(eventID: String)
+    case displayThread(itemID: TimelineItemIdentifier)
+    case showTranslation(text: String)
 }
 
-@MainActor
+/// The interaction handler groups logic for dealing with various actions the user can take on a timeline's
+/// view that would've normally been part of the ``TimelineViewModel``
 class TimelineInteractionHandler {
     private let roomProxy: JoinedRoomProxyProtocol
     private let timelineController: TimelineControllerProtocol
-    private let mediaProvider: MediaProviderProtocol
+    private let userSession: UserSessionProtocol
     private let mediaPlayerProvider: MediaPlayerProviderProtocol
     private let voiceMessageRecorder: VoiceMessageRecorderProtocol
-    private let voiceMessageMediaManager: VoiceMessageMediaManagerProtocol
     private let userIndicatorController: UserIndicatorControllerProtocol
     private let appMediator: AppMediatorProtocol
     private let appSettings: AppSettings
-    private let analyticsService: AnalyticsService
+    private let analyticsService: AnalyticsServiceProtocol
     private let emojiProvider: EmojiProviderProtocol
+    private let linkMetadataProvider: LinkMetadataProviderProtocol
     private let timelineControllerFactory: TimelineControllerFactoryProtocol
     private let pollInteractionHandler: PollInteractionHandlerProtocol
-    private let clientProxy: ClientProxyProtocol
     
     private let actionsSubject: PassthroughSubject<TimelineInteractionHandlerAction, Never> = .init()
     var actions: AnyPublisher<TimelineInteractionHandlerAction, Never> {
@@ -56,33 +60,44 @@ class TimelineInteractionHandler {
     
     private var resumeVoiceMessagePlaybackAfterScrubbing = false
     
+    /// The voice message playback that was last asked for, and whether the player has begun it.
+    private enum VoiceMessagePlayback {
+        case requested(TimelineItemIdentifier)
+        case playing(TimelineItemIdentifier)
+    }
+    
+    private var voiceMessagePlayback: VoiceMessagePlayback?
+    private var audioPlayerActionsCancellable: AnyCancellable?
+    
+    private var emojiPickerCancellable: AnyCancellable?
+    
     init(roomProxy: JoinedRoomProxyProtocol,
          timelineController: TimelineControllerProtocol,
-         mediaProvider: MediaProviderProtocol,
+         userSession: UserSessionProtocol,
          mediaPlayerProvider: MediaPlayerProviderProtocol,
-         voiceMessageMediaManager: VoiceMessageMediaManagerProtocol,
          voiceMessageRecorder: VoiceMessageRecorderProtocol,
          userIndicatorController: UserIndicatorControllerProtocol,
          appMediator: AppMediatorProtocol,
          appSettings: AppSettings,
-         analyticsService: AnalyticsService,
+         analyticsService: AnalyticsServiceProtocol,
          emojiProvider: EmojiProviderProtocol,
-         timelineControllerFactory: TimelineControllerFactoryProtocol,
-         clientProxy: ClientProxyProtocol) {
+         linkMetadataProvider: LinkMetadataProviderProtocol,
+         timelineControllerFactory: TimelineControllerFactoryProtocol) {
         self.roomProxy = roomProxy
         self.timelineController = timelineController
-        self.mediaProvider = mediaProvider
+        self.userSession = userSession
         self.mediaPlayerProvider = mediaPlayerProvider
-        self.voiceMessageMediaManager = voiceMessageMediaManager
         self.voiceMessageRecorder = voiceMessageRecorder
         self.userIndicatorController = userIndicatorController
         self.appMediator = appMediator
         self.appSettings = appSettings
         self.analyticsService = analyticsService
         self.emojiProvider = emojiProvider
+        self.linkMetadataProvider = linkMetadataProvider
         self.timelineControllerFactory = timelineControllerFactory
-        self.clientProxy = clientProxy
-        pollInteractionHandler = PollInteractionHandler(analyticsService: analyticsService, roomProxy: roomProxy)
+        
+        pollInteractionHandler = PollInteractionHandler(analyticsService: analyticsService,
+                                                        timelineController: timelineController)
     }
     
     // MARK: Timeline Item Action Menu
@@ -94,14 +109,33 @@ class TimelineInteractionHandler {
                 // Don't show a menu for non-event based items.
                 return
             }
-
+            
             actionsSubject.send(.composer(action: .removeFocus))
             actionsSubject.send(.showActionMenu(.init(item: eventTimelineItem)))
         }
     }
-
+    
+    func redact(_ itemID: TimelineItemIdentifier, reason: String?) {
+        // Redacting needs the event alone, so it works even when the item isn't part of this timeline,
+        // such as one held by a media preview that was built from a different one.
+        guard case let .event(_, eventOrTransactionID) = itemID else { fatalError() }
+        Task { await timelineController.redact(eventOrTransactionID, reason: reason) }
+    }
+    
     // swiftlint:disable:next cyclomatic_complexity
     func handleTimelineItemMenuAction(_ action: TimelineItemMenuAction, itemID: TimelineItemIdentifier) {
+        if case .redact = action {
+            // An unsent message is only dropped from the send queue. No redaction event reaches
+            // the server, so there is nothing to attach a reason to, and asking for one would
+            // only delay the abort while the message might still go out.
+            if case .event(_, .eventID) = itemID {
+                actionsSubject.send(.showRedactConfirmation(itemID: itemID))
+            } else {
+                redact(itemID, reason: nil)
+            }
+            return
+        }
+        
         guard let timelineItem = timelineController.timelineItems.firstUsingStableID(itemID),
               let eventTimelineItem = timelineItem as? EventBasedTimelineItemProtocol else {
             return
@@ -126,7 +160,7 @@ class TimelineInteractionHandler {
                     MXLog.error("Cannot edit poll with id: \(timelineItem.id)")
                     return
                 }
-                actionsSubject.send(.displayPollForm(mode: .edit(eventID: eventID, poll: pollTimelineItem.poll)))
+                actionsSubject.send(.displayEditPollForm(eventID: eventID, poll: pollTimelineItem.poll))
             default:
                 MXLog.error("Cannot edit item with id: \(timelineItem.id)")
             }
@@ -151,8 +185,7 @@ class TimelineInteractionHandler {
                 UIPasteboard.general.url = permalinkURL
             }
         case .redact:
-            guard case let .event(_, eventOrTransactionID) = itemID else { fatalError() }
-            Task { await timelineController.redact(eventOrTransactionID) }
+            break // Handled above, before the timeline item is looked up.
         case .reply:
             guard let eventID = eventTimelineItem.id.eventID else { return }
             
@@ -160,6 +193,8 @@ class TimelineInteractionHandler {
             let replyDetails = TimelineItemReplyDetails.loaded(sender: eventTimelineItem.sender, eventID: eventID, eventContent: replyInfo.type)
             
             actionsSubject.send(.composer(action: .setMode(mode: .reply(eventID: eventID, replyDetails: replyDetails, isThread: replyInfo.isThread))))
+        case .replyInThread:
+            actionsSubject.send(.displayThread(itemID: eventTimelineItem.id))
         case .forward(let itemID):
             actionsSubject.send(.displayMessageForwarding(itemID: itemID))
         case .viewSource:
@@ -189,10 +224,11 @@ class TimelineInteractionHandler {
             analyticsService.trackInteraction(name: .PinnedMessageListViewTimeline)
             guard let eventID = itemID.eventID else { return }
             actionsSubject.send(.viewInRoomTimeline(eventID: eventID))
-        case .share:
-            break // Handled inline in the media preview screen with a ShareLink.
-        case .save:
-            break // Handled inline in the media preview screen.
+        case .downloadMedia, .selectMessages:
+            break // Handled by the media preview screen and the TimelineViewModel respectively.
+        case .translate:
+            guard let messageTimelineItem = timelineItem as? EventBasedMessageTimelineItemProtocol else { return }
+            actionsSubject.send(.showTranslation(text: messageTimelineItem.body))
         }
         
         if action.switchToDefaultComposer {
@@ -231,6 +267,10 @@ class TimelineInteractionHandler {
             text = content.caption ?? ""
             htmlText = content.formattedCaptionHTMLString
             editType = text.isEmpty ? .addCaption : .editCaption
+        case .gallery(let content):
+            text = content.caption ?? ""
+            htmlText = content.formattedCaptionHTMLString
+            editType = text.isEmpty ? .addCaption : .editCaption
         default:
             text = messageTimelineItem.body
         }
@@ -241,10 +281,10 @@ class TimelineInteractionHandler {
     }
     
     // MARK: Polls
-
-    func sendPollResponse(pollStartID: String, optionID: String) {
+    
+    func sendPollResponse(pollStartID: String, answerIDs: [String]) {
         Task {
-            let sendPollResponseResult = await pollInteractionHandler.sendPollResponse(pollStartID: pollStartID, optionID: optionID)
+            let sendPollResponseResult = await pollInteractionHandler.sendPollResponse(pollStartID: pollStartID, answerIDs: answerIDs)
             
             switch sendPollResponseResult {
             case .success:
@@ -270,7 +310,7 @@ class TimelineInteractionHandler {
     
     // MARK: Pasting and dropping
     
-    func handlePasteOrDrop(_ provider: NSItemProvider) {
+    func handlePasteOrDrop(_ providers: [NSItemProvider]) {
         Task {
             let loadingIndicatorIdentifier = UUID().uuidString
             self.userIndicatorController.submitIndicator(UserIndicator(id: loadingIndicatorIdentifier, type: .modal, title: L10n.commonLoading, persistent: true))
@@ -278,13 +318,19 @@ class TimelineInteractionHandler {
                 self.userIndicatorController.retractIndicatorWithId(loadingIndicatorIdentifier)
             }
             
-            guard let fileURL = await provider.storeData() else {
-                MXLog.error("Failed storing NSItemProvider data \(provider)")
-                self.actionsSubject.send(.displayErrorToast(L10n.screenRoomErrorFailedProcessingMedia))
-                return
+            var mediaURLs = [URL]()
+            for provider in providers {
+                if let fileURL = await provider.storeData() {
+                    mediaURLs.append(fileURL)
+                } else {
+                    MXLog.error("Failed storing NSItemProvider data \(provider)")
+                    self.actionsSubject.send(.displayErrorToast(L10n.screenRoomErrorFailedProcessingMedia))
+                }
             }
             
-            self.actionsSubject.send(.displayMediaUploadPreviewScreen(url: fileURL))
+            if !mediaURLs.isEmpty {
+                self.actionsSubject.send(.displayMediaUploadPreviewScreen(mediaURLs: mediaURLs))
+            }
         }
     }
     
@@ -326,6 +372,12 @@ class TimelineInteractionHandler {
         await voiceMessageRecorder.stopRecording()
     }
     
+    /// Stops the recording when one is in progress, moving the composer to the preview state.
+    func stopRecordingVoiceMessageIfNeeded() async {
+        guard voiceMessageRecorder.isRecording else { return }
+        await voiceMessageRecorder.stopRecording()
+    }
+    
     func cancelRecordingVoiceMessage() async {
         await voiceMessageRecorder.cancelRecording()
         voiceMessageRecorderObserver = nil
@@ -354,10 +406,11 @@ class TimelineInteractionHandler {
                                        isReply: false,
                                        messageType: .VoiceMessage,
                                        startsThread: nil)
-
+        
         actionsSubject.send(.composer(action: .setMode(mode: .previewVoiceMessage(state: audioPlayerState, waveform: .url(recordingURL), isUploading: true))))
         await voiceMessageRecorder.stopPlayback()
-        switch await voiceMessageRecorder.sendVoiceMessage(inRoom: roomProxy, audioConverter: AudioConverter()) {
+        
+        switch await voiceMessageRecorder.sendVoiceMessage(timelineController: timelineController, audioConverter: AudioConverter()) {
         case .success:
             await deleteCurrentVoiceMessage()
         case .failure(let error):
@@ -402,6 +455,13 @@ class TimelineInteractionHandler {
     
     // MARK: Audio Playback
     
+    func changePlaybackSpeed(for itemID: TimelineItemIdentifier) {
+        let nextSpeed = appSettings.voiceMessagePlaybackSpeed.next
+        appSettings.voiceMessagePlaybackSpeed = nextSpeed
+        audioPlayerState(for: itemID)?.setPlaybackSpeed(nextSpeed)
+    }
+    
+    // swiftlint:disable:next cyclomatic_complexity
     func playPauseAudio(for itemID: TimelineItemIdentifier) async {
         MXLog.info("Toggle play/pause audio for itemID \(itemID)")
         guard let timelineItem = timelineController.timelineItems.firstUsingStableID(itemID) else {
@@ -417,13 +477,24 @@ class TimelineInteractionHandler {
             return
         }
         
+        // Loading a new message tears the player down, which cancels any autoplay that was pending for the previous one.
+        voiceMessagePlayback = .requested(itemID)
+        
         let audioPlayer = mediaPlayerProvider.player
-
+        
+        // Observe the player lazily so that the mocks used by the previews and the UI tests don't need one.
+        if audioPlayerActionsCancellable == nil {
+            audioPlayerActionsCancellable = audioPlayer.actions
+                .sink { [weak self] action in
+                    Task { await self?.handleAudioPlayerAction(action) }
+                }
+        }
+        
         // Stop any recording in progress
         if voiceMessageRecorder.isRecording {
             await voiceMessageRecorder.stopRecording()
         }
-
+        
         guard let audioPlayerState = audioPlayerState(for: itemID) else {
             fatalError("Audio player state not found for \(itemID)")
         }
@@ -432,16 +503,16 @@ class TimelineInteractionHandler {
         if !audioPlayerState.isAttached {
             audioPlayerState.attachAudioPlayer(audioPlayer)
         }
-
+        
         // Detach all other states
         await mediaPlayerProvider.detachAllStates(except: audioPlayerState)
-
+        
         guard audioPlayer.sourceURL == source.url, audioPlayer.state != .error else {
             // Load content
             do {
                 MXLog.info("Loading voice message audio content from source for itemID \(itemID)")
-                let url = try await voiceMessageMediaManager.loadVoiceMessageFromSource(source, body: nil)
-
+                let url = try await userSession.voiceMessageMediaManager.loadVoiceMessageFromSource(source, body: nil)
+                
                 // Make sure that the player is still attached, as it may have been detached while waiting for the voice message to be loaded.
                 if audioPlayerState.isAttached {
                     audioPlayer.load(sourceURL: source.url, playbackURL: url, autoplay: true)
@@ -460,7 +531,37 @@ class TimelineInteractionHandler {
             audioPlayer.play()
         }
     }
+    
+    private func handleAudioPlayerAction(_ action: AudioPlayerAction) async {
+        switch action {
+        case .didStartPlaying:
+            if case .requested(let itemID) = voiceMessagePlayback {
+                voiceMessagePlayback = .playing(itemID)
+            }
+        case .didFinishPlaying:
+            // Anything else means the player was torn down to play something different
+            // rather than reaching the end of the message it had started.
+            guard case .playing(let finishedItemID) = voiceMessagePlayback else { return }
+            voiceMessagePlayback = nil
+            await autoplayVoiceMessage(following: finishedItemID)
+        case .didStartLoading, .didFinishLoading, .didPausePlaying, .didStopPlaying, .didFailWithError:
+            break
+        }
+    }
+    
+    /// Plays the voice message directly following the given one.
+    private func autoplayVoiceMessage(following finishedItemID: TimelineItemIdentifier) async {
+        // The playback may have been taken over by another player state, such as the recorder's preview.
+        guard audioPlayerState(for: finishedItemID)?.isAttached == true,
+              let nextVoiceMessage = timelineController.timelineItems.voiceMessageDirectlyFollowing(finishedItemID) else {
+            return
+        }
         
+        MXLog.info("Autoplaying the voice message following itemID \(finishedItemID)")
+        mediaPlayerProvider.play(soundEffect: .tink)
+        await playPauseAudio(for: nextVoiceMessage.id)
+    }
+    
     func seekAudio(for itemID: TimelineItemIdentifier, progress: Double) async {
         guard let playerState = mediaPlayerProvider.playerState(for: .timelineItemIdentifier(itemID)) else {
             return
@@ -487,7 +588,9 @@ class TimelineInteractionHandler {
         let playerState = AudioPlayerState(id: .timelineItemIdentifier(itemID),
                                            title: L10n.commonVoiceMessage,
                                            duration: voiceMessageRoomTimelineItem.content.duration,
-                                           waveform: voiceMessageRoomTimelineItem.content.waveform)
+                                           waveform: voiceMessageRoomTimelineItem.content.waveform,
+                                           playbackSpeed: appSettings.voiceMessagePlaybackSpeed,
+                                           playbackSpeedPublisher: appSettings.voiceMessagePlaybackSpeedPublisher)
         mediaPlayerProvider.register(audioPlayerState: playerState)
         return playerState
     }
@@ -497,28 +600,54 @@ class TimelineInteractionHandler {
     func displayEmojiPicker(for itemID: TimelineItemIdentifier) {
         guard let timelineItem = timelineController.timelineItems.firstUsingStableID(itemID),
               timelineItem.isReactable,
-              let eventTimelineItem = timelineItem as? EventBasedTimelineItemProtocol else {
+              let eventTimelineItem = timelineItem as? EventBasedTimelineItemProtocol,
+              case let .event(_, eventOrTransactionID) = itemID else {
             return
         }
         let selectedEmojis = Set(eventTimelineItem.properties.reactions.compactMap { $0.isHighlighted ? $0.key : nil })
-        actionsSubject.send(.displayEmojiPicker(itemID: itemID, selectedEmojis: selectedEmojis))
+        
+        let (stream, continuation) = AsyncStream<String>.makeStream()
+        actionsSubject.send(.displayEmojiPicker(selectedEmojis: selectedEmojis, continuation: continuation))
+        
+        emojiPickerCancellable = Task { [weak self] in
+            for await emoji in stream {
+                await self?.timelineController.toggleReaction(emoji, to: eventOrTransactionID)
+            }
+        }
+        .asCancellable()
     }
     
     func processItemTap(_ itemID: TimelineItemIdentifier) async -> TimelineControllerAction {
-        guard let timelineItem = timelineController.timelineItems.firstUsingStableID(itemID) as? EventBasedMessageTimelineItemProtocol else {
+        guard let timelineItem = timelineController.timelineItems.firstUsingStableID(itemID) as? EventBasedTimelineItemProtocol else {
             return .none
         }
         
         switch timelineItem {
         case let item as LocationRoomTimelineItem:
             guard let geoURI = item.content.geoURI else { return .none }
-            return .displayLocation(body: item.content.body, geoURI: geoURI, description: item.content.description)
-        case is ImageRoomTimelineItem,
-             is VideoRoomTimelineItem:
-            return await mediaPreviewAction(for: timelineItem, messageTypes: [.image, .video])
-        case is AudioRoomTimelineItem,
-             is FileRoomTimelineItem:
-            return await mediaPreviewAction(for: timelineItem, messageTypes: [.audio, .file])
+            return .displayLocation(.init(sender: item.sender,
+                                          geoURI: geoURI,
+                                          kind: item.content.kind,
+                                          timestamp: item.timestamp))
+        case let item as LiveLocationRoomTimelineItem:
+            guard let geoURI = item.content.lastGeoURI else { return .none }
+            let initialLiveLocationShare = LiveLocationShare(userID: item.sender.id,
+                                                             geoURI: geoURI,
+                                                             timestamp: item.timestamp,
+                                                             timeoutDate: item.content.timeoutDate)
+            return .displayLiveLocation(sender: item.sender, initialLiveLocationShare: initialLiveLocationShare)
+        // Galleries are included so that their attachments can be browsed as individual media.
+        case let item as ImageRoomTimelineItem:
+            return await mediaPreviewAction(for: item, messageTypes: [.image, .video, .gallery])
+        case let item as VideoRoomTimelineItem:
+            return await mediaPreviewAction(for: item, messageTypes: [.image, .video, .gallery])
+        case let item as AudioRoomTimelineItem:
+            return await mediaPreviewAction(for: item, messageTypes: [.audio, .file, .gallery])
+        case let item as FileRoomTimelineItem:
+            return await mediaPreviewAction(for: item, messageTypes: [.audio, .file, .gallery])
+        case let item as GalleryRoomTimelineItem:
+            // Only galleries are needed as the preview is scoped to the attachments of the tapped one.
+            return await mediaPreviewAction(for: item, messageTypes: [.gallery])
         default:
             return .none
         }
@@ -554,7 +683,10 @@ class TimelineInteractionHandler {
         case .pinned:
             newTimelineFocus = .pinned
             newTimelinePresentation = .pinnedEventsScreen
-        case .media, .thread:
+        case .thread(let rootEventID):
+            newTimelineFocus = .thread(eventID: rootEventID)
+            newTimelinePresentation = .roomScreenThread
+        case .media:
             break // We don't need to create a new timeline as it is already filtered.
         }
         
@@ -568,28 +700,37 @@ class TimelineInteractionHandler {
                                                                                                                                  presentation: newTimelinePresentation,
                                                                                                                                  roomProxy: roomProxy,
                                                                                                                                  timelineItemFactory: timelineItemFactory,
-                                                                                                                                 mediaProvider: mediaProvider) else {
+                                                                                                                                 mediaProvider: userSession.mediaProvider) else {
                 MXLog.error("Failed presenting media timeline")
                 return .none
             }
             
             let timelineViewModel = TimelineViewModel(roomProxy: roomProxy,
                                                       timelineController: timelineController,
-                                                      mediaProvider: mediaProvider,
+                                                      userSession: userSession,
                                                       mediaPlayerProvider: mediaPlayerProvider,
-                                                      voiceMessageMediaManager: voiceMessageMediaManager,
                                                       userIndicatorController: userIndicatorController,
                                                       appMediator: appMediator,
                                                       appSettings: appSettings,
                                                       analyticsService: analyticsService,
                                                       emojiProvider: emojiProvider,
-                                                      timelineControllerFactory: timelineControllerFactory,
-                                                      clientProxy: clientProxy)
+                                                      linkMetadataProvider: linkMetadataProvider,
+                                                      timelineControllerFactory: timelineControllerFactory)
             
-            return .displayMediaPreview(item: item, timelineViewModel: .new(timelineViewModel))
+            return previewAction(for: item, timelineViewModel: .new(timelineViewModel))
         } else {
-            return .displayMediaPreview(item: item, timelineViewModel: .active)
+            return previewAction(for: item, timelineViewModel: .active)
         }
+    }
+    
+    /// A gallery is previewed scoped to its own attachments rather than the wider timeline's media.
+    private func previewAction(for item: EventBasedMessageTimelineItemProtocol,
+                               timelineViewModel: TimelineControllerAction.TimelineViewModelKind) -> TimelineControllerAction {
+        guard let galleryItem = item as? GalleryRoomTimelineItem else {
+            return .displayMediaPreview(item: item, timelineViewModel: timelineViewModel)
+        }
+        
+        return .displayGalleryPreview(galleryItem: galleryItem, timelineViewModel: timelineViewModel)
     }
 }
 

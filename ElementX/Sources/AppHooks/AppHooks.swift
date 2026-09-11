@@ -1,45 +1,71 @@
 //
-// Copyright 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2024-2025 New Vector Ltd.
 //
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
+import Macros
+import Synchronization
 
-class AppHooks: AppHooksProtocol {
+final nonisolated class AppHooks: AppHooksProtocol {
     #if IS_MAIN_APP
-    private(set) var appSettingsHook: AppSettingsHookProtocol = DefaultAppSettingsHook()
-    func registerAppSettingsHook(_ hook: AppSettingsHookProtocol) {
-        appSettingsHook = hook
+    func configure(with userSession: UserSessionProtocol?) async {
+        await userSessionHook.configure(with: userSession)
     }
     
-    private(set) var compoundHook: CompoundHookProtocol = DefaultCompoundHook()
-    func registerCompoundHook(_ hook: CompoundHookProtocol) {
-        compoundHook = hook
-    }
+    @AppHook(default: DefaultAppSettingsHook())
+    var appSettingsHook: AppSettingsHookProtocol
     
-    private(set) var bugReportHook: BugReportHookProtocol = DefaultBugReportHook()
-    func registerBugReportHook(_ hook: BugReportHookProtocol) {
-        bugReportHook = hook
-    }
+    @AppHook(default: DefaultCompoundHook())
+    var compoundHook: CompoundHookProtocol
     
-    private(set) var certificateValidatorHook: CertificateValidatorHookProtocol = DefaultCertificateValidator()
-    func registerCertificateValidatorHook(_ hook: CertificateValidatorHookProtocol) {
-        certificateValidatorHook = hook
-    }
+    @AppHook(default: DefaultBugReportHook())
+    var bugReportHook: BugReportHookProtocol
+    
+    @AppHook(default: DefaultOAuthPresenterHook())
+    var oAuthPresenterHook: OAuthPresenterHookProtocol
+    
+    @AppHook(default: DefaultUserSessionHook())
+    var userSessionHook: UserSessionHookProtocol
+    
+    @AppHook(default: DefaultRoomScreenHook())
+    var roomScreenHook: RoomScreenHookProtocol
+    
+    @AppHook(default: DefaultRoomDetailsScreenHook())
+    var roomDetailsScreenHook: RoomDetailsScreenHookProtocol
+    
+    @AppHook(default: DefaultRoomMemberDetailsScreenHook())
+    var roomMemberDetailsScreenHook: RoomMemberDetailsScreenHookProtocol
+    
+    @AppHook(default: DefaultUserProfileScreenHook())
+    var userProfileScreenHook: UserProfileScreenHookProtocol
+    
+    @AppHook(default: DefaultDeveloperOptionsScreenHook())
+    var developerOptionsScreenHook: DeveloperOptionsScreenHookProtocol
+    
+    @AppHook(default: DefaultRecoveryKeyScreenHook())
+    var recoveryKeyScreenHook: RecoveryKeyScreenHookProtocol
     #endif
     
-    private(set) var clientBuilderHook: ClientBuilderHookProtocol = DefaultClientBuilderHook()
-    func registerClientBuilderHook(_ hook: ClientBuilderHookProtocol) {
-        clientBuilderHook = hook
-    }
+    @AppHook(default: DefaultTracingHook())
+    var tracingHook: TracingHookProtocol
+    
+    @AppHook(default: DefaultClientFactoryHook())
+    var clientFactoryHook: ClientFactoryHookProtocol
+    
+    @AppHook(default: DefaultRemoteSettingsHook())
+    var remoteSettingsHook: RemoteSettingsHookProtocol
 }
 
-protocol AppHooksProtocol {
+nonisolated protocol AppHooksProtocol: Sendable {
+    // periphery:ignore - required for the architecture
     func setUp()
 }
 
-extension AppHooksProtocol {
+nonisolated extension AppHooksProtocol {
+    // periphery:ignore - required for the architecture
     func setUp() { }
 }

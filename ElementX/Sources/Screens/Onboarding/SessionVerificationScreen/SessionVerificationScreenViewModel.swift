@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -15,13 +16,13 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
     private let flow: SessionVerificationScreenFlow
     
     private var stateMachine: SessionVerificationScreenStateMachine
-
+    
     private var actionsSubject: PassthroughSubject<SessionVerificationScreenViewModelAction, Never> = .init()
     
     var actions: AnyPublisher<SessionVerificationScreenViewModelAction, Never> {
         actionsSubject.eraseToAnyPublisher()
     }
-
+    
     init(sessionVerificationControllerProxy: SessionVerificationControllerProxyProtocol,
          flow: SessionVerificationScreenFlow,
          appSettings: AppSettings,
@@ -86,8 +87,6 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
             actionsSubject.send(.finished)
         case .requestVerification:
             stateMachine.processEvent(.requestVerification)
-        case .startSasVerification:
-            stateMachine.processEvent(.startSasVerification)
         case .restart:
             stateMachine.processEvent(.restart)
         case .accept:
@@ -116,7 +115,7 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
     private func setupStateMachine() {
         stateMachine.addTransitionHandler { [weak self] context in
             guard let self else { return }
-                
+            
             state.verificationState = context.toState
             
             switch (context.fromState, context.event, context.toState) {
@@ -132,7 +131,7 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
                         self.stateMachine.processEvent(.didFail)
                     }
                 }
-            case (.verificationRequestAccepted, .startSasVerification, .startingSasVerification):
+            case (.acceptingVerificationRequest, .didAcceptVerificationRequest, .verificationRequestAccepted):
                 startSasVerification()
             case (.showingChallenge, .acceptChallenge, .acceptingChallenge):
                 acceptChallenge()
@@ -167,7 +166,8 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
             
             switch await sessionVerificationControllerProxy.acceptVerificationRequest() {
             case .success:
-                stateMachine.processEvent(.didAcceptVerificationRequest)
+                // Need to wait for the callback from the remote
+                break
             case .failure:
                 stateMachine.processEvent(.didFail)
             }
@@ -178,7 +178,7 @@ class SessionVerificationScreenViewModel: SessionVerificationViewModelType, Sess
         switch flow {
         case .deviceInitiator:
             return await sessionVerificationControllerProxy.requestDeviceVerification()
-        case .userIntiator(let userID):
+        case .userInitiator(let userID):
             return await sessionVerificationControllerProxy.requestUserVerification(userID)
         default:
             fatalError("Incorrect API usage.")

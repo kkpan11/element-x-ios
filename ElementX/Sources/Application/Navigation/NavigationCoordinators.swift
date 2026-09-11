@@ -1,36 +1,30 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
+import Compound
 import SwiftUI
 
 /// Class responsible for displaying 2 coordinators side by side and collapsing them
 /// into a single navigation stack on compact layouts
-class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomStringConvertible {
+@Observable class NavigationSplitCoordinator: CoordinatorProtocol, CustomStringConvertible {
     fileprivate let placeholderModule: NavigationModule
     
-    var sidebarStackModuleCancellable: AnyCancellable?
-
-    @Published fileprivate var sidebarModule: NavigationModule? {
+    fileprivate var sidebarModule: NavigationModule? {
         didSet {
             if let oldValue {
                 logPresentationChange("Remove sidebar", oldValue)
                 oldValue.tearDown()
-                sidebarStackModuleCancellable = nil
             }
             
             if let sidebarModule {
                 logPresentationChange("Set sidebar", sidebarModule)
                 sidebarModule.coordinator?.start()
-                if let observableCoordinator = sidebarModule.coordinator as? NavigationStackCoordinator {
-                    sidebarStackModuleCancellable = observableCoordinator.$stackModules.sink { [weak self] _ in
-                        self?.objectWillChange.send()
-                    }
-                }
             }
         }
     }
@@ -39,25 +33,17 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
     var sidebarCoordinator: (any CoordinatorProtocol)? {
         sidebarModule?.coordinator
     }
-
-    var detailCoordinatorCancellable: AnyCancellable?
     
-    @Published fileprivate var detailModule: NavigationModule? {
+    fileprivate var detailModule: NavigationModule? {
         didSet {
             if let oldValue {
                 logPresentationChange("Remove detail", oldValue)
                 oldValue.tearDown()
-                detailCoordinatorCancellable = nil
             }
             
             if let detailModule {
                 logPresentationChange("Set detail", detailModule)
                 detailModule.coordinator?.start()
-                if let observableCoordinator = detailModule.coordinator as? NavigationStackCoordinator {
-                    detailCoordinatorCancellable = Publishers.CombineLatest(observableCoordinator.$rootModule, observableCoordinator.$stackModules).sink { [weak self] _ in
-                        self?.objectWillChange.send()
-                    }
-                }
             }
         }
     }
@@ -67,7 +53,7 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
         detailModule?.coordinator
     }
     
-    @Published fileprivate var sheetModule: NavigationModule? {
+    fileprivate var sheetModule: NavigationModule? {
         didSet {
             if let oldValue {
                 logPresentationChange("Remove sheet", oldValue)
@@ -86,7 +72,7 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
         sheetModule?.coordinator
     }
     
-    @Published fileprivate var fullScreenCoverModule: NavigationModule? {
+    fileprivate var fullScreenCoverModule: NavigationModule? {
         didSet {
             if let oldValue {
                 logPresentationChange("Remove fullscreen cover", oldValue)
@@ -100,33 +86,10 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
         }
     }
     
-    // periphery:ignore - might be useful to have
     /// The currently displayed fullscreen cover coordinator
     var fullScreenCoverCoordinator: (any CoordinatorProtocol)? {
         fullScreenCoverModule?.coordinator
     }
-    
-    @Published fileprivate var overlayModule: NavigationModule? {
-        didSet {
-            if let oldValue {
-                logPresentationChange("Remove overlay", oldValue)
-                oldValue.tearDown()
-            }
-            
-            if let overlayModule {
-                logPresentationChange("Set overlay", overlayModule)
-                overlayModule.coordinator?.start()
-            }
-        }
-    }
-    
-    /// The currently displayed overlay coordinator
-    var overlayCoordinator: (any CoordinatorProtocol)? {
-        overlayModule?.coordinator
-    }
-    
-    enum OverlayPresentationMode { case fullScreen, minimized }
-    @Published fileprivate var overlayPresentationMode: OverlayPresentationMode = .minimized
     
     fileprivate var compactLayoutRootModule: NavigationModule? {
         if let sidebarNavigationStackCoordinator = sidebarModule?.coordinator as? NavigationStackCoordinator {
@@ -142,22 +105,16 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
     var compactLayoutRootCoordinator: (any CoordinatorProtocol)? {
         compactLayoutRootModule?.coordinator
     }
-
+    
     var compactLayoutStackModules: [NavigationModule] {
         get {
-            compactLayoutStackModulesBinding.wrappedValue
+            getCompactStackModules()
         }
         set {
-            compactLayoutStackModulesBinding.wrappedValue = newValue
+            setCompactStackModules(newValue)
         }
     }
-
-    fileprivate lazy var compactLayoutStackModulesBinding: Binding<[NavigationModule]> = Binding(get: { [weak self] in
-        self?.getCompactStackModules() ?? []
-    }, set: { [weak self] newValue in
-        self?.setCompactStackModules(newValue)
-    })
-
+    
     private func getCompactStackModules() -> [NavigationModule] {
         // Start building the new compact layout navigation stack
         var stackModules: [NavigationModule] = []
@@ -166,23 +123,23 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
         if let sidebarNavigationStackCoordinator = sidebarModule?.coordinator as? NavigationStackCoordinator {
             stackModules.append(contentsOf: sidebarNavigationStackCoordinator.stackModules)
         }
-
+        
         // If the detail is a stackCoordinator then push its root and children to the compact layout stack
         if let detailNavigationStackCoordinator = detailModule?.coordinator as? NavigationStackCoordinator {
             if let detailRootCoordinator = detailNavigationStackCoordinator.rootModule {
                 stackModules.append(detailRootCoordinator)
             }
-
+            
             stackModules.append(contentsOf: detailNavigationStackCoordinator.stackModules)
         } else if let detailModule { // Otherwise just push it entirely
             stackModules.append(detailModule)
         }
         return stackModules
     }
-
+    
     private func setCompactStackModules(_ modules: [NavigationModule]) {
         guard compactLayoutStackModules != modules else { return }
-
+        
         let diffs = modules.difference(from: compactLayoutStackModules)
         diffs.forEach { change in
             switch change {
@@ -193,10 +150,13 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
             }
         }
     }
-
+    
     var compactLayoutStackCoordinators: [any CoordinatorProtocol] {
         compactLayoutStackModules.compactMap(\.coordinator)
     }
+    
+    /// Tracks the current column visibility of the split view. Only meaningful in regular (non-compact) layouts.
+    var columnVisibility = NavigationSplitViewVisibility.all
     
     /// Default NavigationSplitCoordinator initialiser
     /// - Parameter placeholderCoordinator: coordinator to use if no siderbar or detail is set
@@ -218,10 +178,10 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
         if sidebarModule?.coordinator === coordinator {
             fatalError("Cannot use the same coordinator more than once")
         }
-
+        
         var transaction = Transaction()
         transaction.disablesAnimations = !animated
-
+        
         withTransaction(transaction) {
             sidebarModule = NavigationModule(coordinator, dismissalCallback: dismissalCallback)
         }
@@ -241,10 +201,10 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
         if detailModule?.coordinator === coordinator {
             fatalError("Cannot use the same coordinator more than once")
         }
-
+        
         var transaction = Transaction()
         transaction.disablesAnimations = !animated
-
+        
         withTransaction(transaction) {
             detailModule = NavigationModule(coordinator, dismissalCallback: dismissalCallback)
         }
@@ -264,10 +224,10 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
         if sheetModule?.coordinator === coordinator {
             fatalError("Cannot use the same coordinator more than once")
         }
-
+        
         var transaction = Transaction()
         transaction.disablesAnimations = !animated
-
+        
         withTransaction(transaction) {
             sheetModule = NavigationModule(coordinator, dismissalCallback: dismissalCallback)
         }
@@ -287,56 +247,15 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
         if fullScreenCoverModule?.coordinator === coordinator {
             fatalError("Cannot use the same coordinator more than once")
         }
-
+        
         var transaction = Transaction()
         transaction.disablesAnimations = !animated
-
+        
         withTransaction(transaction) {
             fullScreenCoverModule = NavigationModule(coordinator, dismissalCallback: dismissalCallback)
         }
     }
     
-    /// Present an overlay on top of the split view
-    /// - Parameters:
-    ///   - coordinator: the coordinator to display
-    ///   - presentationMode: how the coordinator should be presented
-    ///   - animated: whether the transition should be animated
-    ///   - dismissalCallback: called when the overlay has been dismissed, programatically or otherwise
-    func setOverlayCoordinator(_ coordinator: (any CoordinatorProtocol)?,
-                               presentationMode: OverlayPresentationMode = .fullScreen,
-                               animated: Bool = true,
-                               dismissalCallback: (() -> Void)? = nil) {
-        guard let coordinator else {
-            overlayModule = nil
-            return
-        }
-        
-        if overlayModule?.coordinator === coordinator {
-            fatalError("Cannot use the same coordinator more than once")
-        }
-
-        var transaction = Transaction()
-        transaction.disablesAnimations = !animated
-
-        withTransaction(transaction) {
-            overlayPresentationMode = presentationMode
-            overlayModule = NavigationModule(coordinator, dismissalCallback: dismissalCallback)
-        }
-    }
-    
-    /// Updates the presentation of the overlay coordinator.
-    /// - Parameters:
-    ///   - mode: The type of presentation to use.
-    ///   - animated: whether the transition should be animated
-    func setOverlayPresentationMode(_ mode: OverlayPresentationMode, animated: Bool = true) {
-        var transaction = Transaction()
-        transaction.disablesAnimations = !animated
-        
-        withTransaction(transaction) {
-            overlayPresentationMode = mode
-        }
-    }
-        
     // MARK: - CoordinatorProtocol
     
     func toPresentable() -> AnyView {
@@ -348,7 +267,7 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
     }
     
     // MARK: - CustomStringConvertible
-
+    
     var description: String {
         switch (sidebarModule?.coordinator, detailModule?.coordinator) {
         case (.some(let sidebarCoordinator), .some(let detailCoordinator)):
@@ -410,12 +329,16 @@ class NavigationSplitCoordinator: CoordinatorProtocol, ObservableObject, CustomS
     }
 }
 
+extension EnvironmentValues {
+    /// Whether or not the current view is part of the sidebar module of a `NavigationSplitCoordinator`.
+    @Entry var isInSidebar = false
+}
+
 private struct NavigationSplitCoordinatorView: View {
-    @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @Environment(\.tabViewHorizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.scenePhase) private var scenePhase
     
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    
-    @ObservedObject var navigationSplitCoordinator: NavigationSplitCoordinator
+    @Bindable var navigationSplitCoordinator: NavigationSplitCoordinator
     
     var body: some View {
         Group {
@@ -437,22 +360,19 @@ private struct NavigationSplitCoordinatorView: View {
             module.coordinator?.toPresentable()
                 .id(module.id)
         }
-        .overlay {
-            Group {
-                if let coordinator = navigationSplitCoordinator.overlayModule?.coordinator {
-                    coordinator.toPresentable()
-                        .opacity(navigationSplitCoordinator.overlayPresentationMode == .minimized ? 0 : 1)
-                        .transition(.opacity)
-                }
+        .onChange(of: navigationSplitCoordinator.columnVisibility) { oldValue, _ in
+            // Preserve the current column visibility when backgrounding the app
+            if scenePhase == .background {
+                navigationSplitCoordinator.columnVisibility = oldValue
             }
-            .animation(.elementDefault, value: navigationSplitCoordinator.overlayPresentationMode)
-            .animation(.elementDefault, value: navigationSplitCoordinator.overlayModule)
         }
+        .ignoresSafeArea(edges: Compound.supportsGlass ? [] : .all) // When embedded in a TabView on iPadOS 18 there's a gap at the top.
     }
     
     /// The NavigationStack that will be used in compact layouts
     var navigationStack: some View {
-        NavigationStack(path: navigationSplitCoordinator.compactLayoutStackModulesBinding) {
+        // swiftlint:disable:next prefer_element_navigation_stack
+        NavigationStack(path: $navigationSplitCoordinator.compactLayoutStackModules) {
             navigationSplitCoordinator.compactLayoutRootModule?.coordinator?.toPresentable()
                 .id(navigationSplitCoordinator.compactLayoutRootModule?.id) // Is a nil ID ok?
                 .navigationDestination(for: NavigationModule.self) { module in
@@ -464,14 +384,19 @@ private struct NavigationSplitCoordinatorView: View {
     
     /// The NavigationSplitView that will be used in non-compact layouts
     var navigationSplitView: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            if let sidebarModule = navigationSplitCoordinator.sidebarModule {
-                sidebarModule.coordinator?.toPresentable()
-                    .id(sidebarModule.id)
-            } else {
-                navigationSplitCoordinator.placeholderModule.coordinator?.toPresentable()
-                    .id(navigationSplitCoordinator.placeholderModule.id)
+        NavigationSplitView(columnVisibility: $navigationSplitCoordinator.columnVisibility) {
+            Group {
+                if let sidebarModule = navigationSplitCoordinator.sidebarModule {
+                    sidebarModule.coordinator?.toPresentable()
+                        .id(sidebarModule.id)
+                } else {
+                    navigationSplitCoordinator.placeholderModule.coordinator?.toPresentable()
+                        .id(navigationSplitCoordinator.placeholderModule.id)
+                }
             }
+            .environment(\.isInSidebar, true)
+            // The tab rail's background tracks the detail module, so exclude the sidebar's background value.
+            .transformPreference(CompoundBackgroundPreferenceKey.self) { $0 = nil }
         } detail: {
             if let detailModule = navigationSplitCoordinator.detailModule {
                 detailModule.coordinator?.toPresentable()
@@ -487,17 +412,17 @@ private struct NavigationSplitCoordinatorView: View {
                 .id(module.id)
         }
         .animation(.elementDefault, value: navigationSplitCoordinator.sidebarModule)
-        .animation(.elementDefault, value: navigationSplitCoordinator.detailModule)
+        .animation(.noAnimation, value: navigationSplitCoordinator.detailModule) // Don't crossfade the detail transition on iPad.
     }
 }
 
 // MARK: - NavigationStackCoordinator
 
 /// Class responsible for displaying a normal "NavigationController" style hierarchy
-class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomStringConvertible {
+@Observable class NavigationStackCoordinator: CoordinatorProtocol, CustomStringConvertible {
     private(set) weak var navigationSplitCoordinator: NavigationSplitCoordinator?
     
-    @Published fileprivate var rootModule: NavigationModule? {
+    fileprivate var rootModule: NavigationModule? {
         didSet {
             if let oldValue {
                 logPresentationChange("Remove root", oldValue)
@@ -511,12 +436,12 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
         }
     }
     
-    // The stack's current root coordinator
+    /// The stack's current root coordinator
     var rootCoordinator: (any CoordinatorProtocol)? {
         rootModule?.coordinator
     }
     
-    @Published fileprivate var sheetModule: NavigationModule? {
+    fileprivate var sheetModule: NavigationModule? {
         didSet {
             if let oldValue {
                 logPresentationChange("Remove sheet", oldValue)
@@ -532,8 +457,8 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
     
     var presentationDetents: Set<PresentationDetent> = []
     
-    // The currently presented sheet coordinator
-    // Sheets will be presented through the NavigationSplitCoordinator if provided
+    /// The currently presented sheet coordinator
+    /// Sheets will be presented through the NavigationSplitCoordinator if provided
     var sheetCoordinator: (any CoordinatorProtocol)? {
         if let navigationSplitCoordinator {
             return navigationSplitCoordinator.sheetCoordinator
@@ -542,7 +467,7 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
         return sheetModule?.coordinator
     }
     
-    @Published fileprivate var fullScreenCoverModule: NavigationModule? {
+    fileprivate var fullScreenCoverModule: NavigationModule? {
         didSet {
             if let oldValue {
                 logPresentationChange("Remove fullscreen cover", oldValue)
@@ -557,8 +482,8 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
     }
     
     // periphery:ignore - might be useful to have
-    // The currently presented fullscreen cover coordinator
-    // Fullscreen covers will be presented through the NavigationSplitCoordinator if provided
+    /// The currently presented fullscreen cover coordinator
+    /// Fullscreen covers will be presented through the NavigationSplitCoordinator if provided
     var fullScreenCoverCoordinator: (any CoordinatorProtocol)? {
         if let navigationSplitCoordinator {
             return navigationSplitCoordinator.fullScreenCoverCoordinator
@@ -567,7 +492,7 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
         return fullScreenCoverModule?.coordinator
     }
     
-    @Published fileprivate var stackModules = [NavigationModule]() {
+    fileprivate var stackModules = [NavigationModule]() {
         didSet {
             let diffs = stackModules.difference(from: oldValue)
             diffs.forEach { change in
@@ -583,7 +508,7 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
         }
     }
     
-    // The current navigation stack. Excludes the rootCoordinator
+    /// The current navigation stack. Excludes the rootCoordinator
     var stackCoordinators: [any CoordinatorProtocol] {
         stackModules.compactMap(\.coordinator)
     }
@@ -612,10 +537,10 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
         }
         
         popToRoot(animated: false)
-
+        
         var transaction = Transaction()
         transaction.disablesAnimations = !animated
-
+        
         withTransaction(transaction) {
             rootModule = NavigationModule(coordinator, dismissalCallback: dismissalCallback)
         }
@@ -629,7 +554,7 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
     func push(_ coordinator: any CoordinatorProtocol, animated: Bool = true, dismissalCallback: (() -> Void)? = nil) {
         var transaction = Transaction()
         transaction.disablesAnimations = !animated
-
+        
         withTransaction(transaction) {
             stackModules.append(NavigationModule(coordinator, dismissalCallback: dismissalCallback))
         }
@@ -641,10 +566,10 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
         guard !stackModules.isEmpty else {
             return
         }
-
+        
         var transaction = Transaction()
         transaction.disablesAnimations = !animated
-
+        
         withTransaction(transaction) {
             stackModules.removeAll()
         }
@@ -655,9 +580,24 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
     func pop(animated: Bool = true) {
         var transaction = Transaction()
         transaction.disablesAnimations = !animated
-
+        
         withTransaction(transaction) {
             _ = stackModules.popLast()
+        }
+    }
+    
+    func pop(to coordinator: CoordinatorProtocol, animated: Bool = true) {
+        if rootCoordinator === coordinator {
+            popToRoot(animated: animated)
+        } else if stackCoordinators.contains(where: { $0 === coordinator }) {
+            var transaction = Transaction()
+            transaction.disablesAnimations = !animated
+            
+            withTransaction(transaction) {
+                while stackCoordinators.last !== coordinator, !stackCoordinators.isEmpty {
+                    _ = stackModules.popLast()
+                }
+            }
         }
     }
     
@@ -666,7 +606,6 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
     /// - Parameters:
     ///   - coordinator: the coordinator to display
     ///   - animated: whether to animate the transition or not. Default is true
-
     ///   - dismissalCallback: called when the sheet has been dismissed, programatically or otherwise
     func setSheetCoordinator(_ coordinator: (any CoordinatorProtocol)?, animated: Bool = true, dismissalCallback: (() -> Void)? = nil) {
         if let navigationSplitCoordinator {
@@ -682,16 +621,15 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
         if sheetModule?.coordinator === coordinator {
             fatalError("Cannot use the same coordinator more than once")
         }
-
+        
         var transaction = Transaction()
         transaction.disablesAnimations = !animated
-
+        
         withTransaction(transaction) {
             sheetModule = NavigationModule(coordinator, dismissalCallback: dismissalCallback)
         }
     }
-
-    // periphery:ignore - might be useful to have
+    
     /// Present a fullscreen cover on top of the stack. If this NavigationStackCoordinator is embedded within a NavigationSplitCoordinator
     /// then the presentation will be proxied to the split
     /// - Parameters:
@@ -712,10 +650,10 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
         if fullScreenCoverModule?.coordinator === coordinator {
             fatalError("Cannot use the same coordinator more than once")
         }
-
+        
         var transaction = Transaction()
         transaction.disablesAnimations = !animated
-
+        
         withTransaction(transaction) {
             fullScreenCoverModule = NavigationModule(coordinator, dismissalCallback: dismissalCallback)
         }
@@ -761,9 +699,10 @@ class NavigationStackCoordinator: ObservableObject, CoordinatorProtocol, CustomS
 }
 
 private struct NavigationStackCoordinatorView: View {
-    @ObservedObject var navigationStackCoordinator: NavigationStackCoordinator
+    @Bindable var navigationStackCoordinator: NavigationStackCoordinator
     
     var body: some View {
+        // swiftlint:disable:next prefer_element_navigation_stack
         NavigationStack(path: $navigationStackCoordinator.stackModules) {
             navigationStackCoordinator.rootModule?.coordinator?.toPresentable()
                 .id(navigationStackCoordinator.rootModule?.id) // Is a nil ID ok?
@@ -780,6 +719,5 @@ private struct NavigationStackCoordinatorView: View {
             module.coordinator?.toPresentable()
                 .id(module.id)
         }
-        .animation(.elementDefault, value: navigationStackCoordinator.rootModule)
     }
 }

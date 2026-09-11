@@ -1,5 +1,6 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 // Please see LICENSE files in the repository root for full details.
@@ -10,11 +11,14 @@ import SwiftUI
 
 struct UserDetailsEditScreenCoordinatorParameters {
     let orientationManager: OrientationManagerProtocol
-    let clientProxy: ClientProxyProtocol
-    let mediaProvider: MediaProviderProtocol
+    let userSession: UserSessionProtocol
     let mediaUploadingPreprocessor: MediaUploadingPreprocessor
     weak var navigationStackCoordinator: NavigationStackCoordinator?
     let userIndicatorController: UserIndicatorControllerProtocol
+}
+
+enum UserDetailsEditScreenCoordinatorAction {
+    case dismiss
 }
 
 final class UserDetailsEditScreenCoordinator: CoordinatorProtocol {
@@ -22,11 +26,15 @@ final class UserDetailsEditScreenCoordinator: CoordinatorProtocol {
     private var viewModel: UserDetailsEditScreenViewModelProtocol
     private var cancellables = Set<AnyCancellable>()
     
+    private let actionsSubject: PassthroughSubject<UserDetailsEditScreenCoordinatorAction, Never> = .init()
+    var actions: AnyPublisher<UserDetailsEditScreenCoordinatorAction, Never> {
+        actionsSubject.eraseToAnyPublisher()
+    }
+    
     init(parameters: UserDetailsEditScreenCoordinatorParameters) {
         self.parameters = parameters
         
-        viewModel = UserDetailsEditScreenViewModel(clientProxy: parameters.clientProxy,
-                                                   mediaProvider: parameters.mediaProvider,
+        viewModel = UserDetailsEditScreenViewModel(userSession: parameters.userSession,
                                                    mediaUploadingPreprocessor: parameters.mediaUploadingPreprocessor,
                                                    userIndicatorController: parameters.userIndicatorController)
     }
@@ -34,13 +42,17 @@ final class UserDetailsEditScreenCoordinator: CoordinatorProtocol {
     func start() {
         viewModel.actions
             .sink { [weak self] action in
+                guard let self else { return }
+                
                 switch action {
+                case .dismiss:
+                    actionsSubject.send(.dismiss)
                 case .displayCameraPicker:
-                    self?.displayMediaPickerWithSource(.camera)
+                    displayMediaPickerWithMode(.init(source: .camera, selectionType: .single))
                 case .displayMediaPicker:
-                    self?.displayMediaPickerWithSource(.photoLibrary)
+                    displayMediaPickerWithMode(.init(source: .photoLibrary, selectionType: .single))
                 case .displayFilePicker:
-                    self?.displayMediaPickerWithSource(.documents)
+                    displayMediaPickerWithMode(.init(source: .documents(types: [.image]), selectionType: .single))
                 }
             }
             .store(in: &cancellables)
@@ -52,15 +64,22 @@ final class UserDetailsEditScreenCoordinator: CoordinatorProtocol {
     
     // MARK: Private
     
-    private func displayMediaPickerWithSource(_ source: MediaPickerScreenSource) {
+    private func displayMediaPickerWithMode(_ mode: MediaPickerScreenMode) {
         let stackCoordinator = NavigationStackCoordinator()
         
-        let mediaPickerCoordinator = MediaPickerScreenCoordinator(userIndicatorController: parameters.userIndicatorController, source: source, orientationManager: parameters.orientationManager) { [weak self] action in
+        let mediaPickerCoordinator = MediaPickerScreenCoordinator(mode: mode,
+                                                                  userIndicatorController: parameters.userIndicatorController,
+                                                                  orientationManager: parameters.orientationManager) { [weak self] action in
             guard let self else { return }
             switch action {
             case .cancel:
                 parameters.navigationStackCoordinator?.setSheetCoordinator(nil)
-            case .selectMediaAtURL(let url):
+            case .selectedMediaAtURLs(let urls):
+                guard urls.count == 1,
+                      let url = urls.first else {
+                    fatalError("Received an invalid number of URLs")
+                }
+                
                 parameters.navigationStackCoordinator?.setSheetCoordinator(nil)
                 viewModel.didSelectMediaURL(url: url)
             }

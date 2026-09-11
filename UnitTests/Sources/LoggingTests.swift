@@ -1,93 +1,87 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 @testable import ElementX
+import Foundation
 @testable import MatrixRustSDK
-import XCTest
+import MatrixRustSDKMocks
+import Testing
 
-class LoggingTests: XCTestCase {
-    private enum Constants {
-        static let genericFailure = "Test failed"
-    }
-
-    override func setUpWithError() throws {
-        Tracing.deleteLogFiles()
+@MainActor
+final class LoggingTests {
+    deinit {
+        Tracing.logsDirectoryOverride = nil
+        do {
+            try reloadTracingFileWriter(configuration: .init(path: URL.appGroupLogsDirectory.path(percentEncoded: false),
+                                                             filePrefix: "console-tests",
+                                                             fileSuffix: ".log",
+                                                             maxTotalSizeBytes: 1000,
+                                                             maxAgeSeconds: 1000))
+        } catch {
+            Issue.record(error)
+        }
     }
     
-    func testLogging() async throws {
-        let target = "tests"
-        XCTAssertTrue(Tracing.logFiles.isEmpty)
+    @Test
+    func fileLogging() throws {
+        try setupTest()
         
-        await Target.tests.configure(logLevel: .info, traceLogPacks: [])
-        
-        // There is something weird with Rust logging where the file writing handle doesn't
-        // notice that the file it is writing to was deleted, so we can't run these checks
-        // as separate tests. So instead we need to make sure we run all the tests that
-        // write logs in this single test case after configuring the log system.
-        
-        try validateFileLogging()
-        try validateLogLevels()
-        try validateTargetName(target)
-        
-        try validateRoomSummaryContentIsRedacted()
-        try await validateTimelineContentIsRedacted()
-        try validateRustMessageContentIsRedacted()
-    }
-    
-    func validateFileLogging() throws {
         let infoLog = UUID().uuidString
-        
         MXLog.info(infoLog)
         
-        guard let logFile = Tracing.logFiles.first else {
-            XCTFail(Constants.genericFailure)
-            return
-        }
+        let logFile = try #require(Tracing.logFiles.first)
         
-        try XCTAssertTrue(String(contentsOf: logFile).contains(infoLog))
-    }
-        
-    func validateLogLevels() throws {
-        let verboseLog = UUID().uuidString
-        
-        MXLog.verbose(verboseLog)
-        guard let logFile = Tracing.logFiles.first else {
-            XCTFail(Constants.genericFailure)
-            return
-        }
-        
-        try XCTAssertFalse(String(contentsOf: logFile).contains(verboseLog))
-    }
-        
-    func validateTargetName(_ target: String) throws {
-        MXLog.info(UUID().uuidString)
-        guard let logFile = Tracing.logFiles.first else {
-            XCTFail(Constants.genericFailure)
-            return
-        }
-        
-        XCTAssertTrue(logFile.lastPathComponent.contains(target))
+        #expect(try String(contentsOf: logFile, encoding: .utf8).contains(infoLog))
     }
     
-    func validateRoomSummaryContentIsRedacted() throws {
+    @Test
+    func logLevels() throws {
+        try setupTest()
+        
+        let verboseLog = UUID().uuidString
+        MXLog.verbose(verboseLog)
+        
+        let logFile = try #require(Tracing.logFiles.first)
+        
+        #expect(try !String(contentsOf: logFile, encoding: .utf8).contains(verboseLog))
+    }
+    
+    /// This is meant to test the `Target.tests.configure(…)`, but at this stage the test is somewhat pointless
+    /// as it is unlikely to have been called before `tearDown` has manually set the file prefix 😕.
+    @Test
+    func targetName() throws {
+        MXLog.info(UUID().uuidString)
+        let logFile = try #require(Tracing.logFiles.first)
+        
+        let target = "tests"
+        #expect(logFile.lastPathComponent.contains(target))
+    }
+    
+    @Test
+    func roomSummaryContentIsRedacted() throws {
+        try setupTest()
+        
         // Given a room summary that contains sensitive information
         let roomName = "Private Conversation"
         let lastMessage = "Secret information"
         let heroName = "Pseudonym"
-        let roomSummary = RoomSummary(roomListItem: .init(noPointer: .init()),
+        let roomSummary = RoomSummary(room: RoomSDKMock(),
                                       id: "myroomid",
                                       joinRequestType: nil,
                                       name: roomName,
                                       isDirect: true,
+                                      isSpace: false,
                                       avatarURL: nil,
                                       heroes: [.init(userID: "", displayName: heroName)],
                                       activeMembersCount: 0,
                                       lastMessage: AttributedString(lastMessage),
                                       lastMessageDate: .mock,
+                                      lastMessageState: nil,
                                       unreadMessagesCount: 0,
                                       unreadMentionsCount: 0,
                                       unreadNotificationsCount: 0,
@@ -95,26 +89,28 @@ class LoggingTests: XCTestCase {
                                       canonicalAlias: nil,
                                       alternativeAliases: [],
                                       hasOngoingCall: false,
+                                      activeCallIntent: nil,
                                       isMarkedUnread: false,
-                                      isFavourite: false)
+                                      isFavourite: false,
+                                      isTombstoned: false)
         
         // When logging that value
         MXLog.info(roomSummary)
         
         // Then the log file should not include the sensitive information
-        guard let logFile = Tracing.logFiles.first else {
-            XCTFail(Constants.genericFailure)
-            return
-        }
+        let logFile = try #require(Tracing.logFiles.first)
         
-        let content = try String(contentsOf: logFile)
-        XCTAssertTrue(content.contains(roomSummary.id))
-        XCTAssertFalse(content.contains(roomName))
-        XCTAssertFalse(content.contains(lastMessage))
-        XCTAssertFalse(content.contains(heroName))
+        let content = try String(contentsOf: logFile, encoding: .utf8)
+        #expect(content.contains(roomSummary.id))
+        #expect(!content.contains(roomName))
+        #expect(!content.contains(lastMessage))
+        #expect(!content.contains(heroName))
     }
+    
+    @Test
+    func timelineContentIsRedacted() throws {
+        try setupTest()
         
-    func validateTimelineContentIsRedacted() async throws {
         // Given timeline items that contain text
         let textAttributedString = "TextAttributed"
         let textMessage = TextRoomTimelineItem(id: .randomEvent,
@@ -174,8 +170,6 @@ class LoggingTests: XCTestCase {
                                                               contentType: nil))
         
         // When logging that value
-        await Target.tests.configure(logLevel: .info, traceLogPacks: [])
-        
         MXLog.info(textMessage)
         MXLog.info(noticeMessage)
         MXLog.info(emoteMessage)
@@ -184,35 +178,35 @@ class LoggingTests: XCTestCase {
         MXLog.info(fileMessage)
         
         // Then the log file should not include the text content
-        guard let logFile = Tracing.logFiles.first else {
-            XCTFail(Constants.genericFailure)
-            return
-        }
+        let logFile = try #require(Tracing.logFiles.first)
         
-        let content = try String(contentsOf: logFile)
-        XCTAssertTrue(content.contains(textMessage.id.uniqueID.value))
-        XCTAssertFalse(content.contains(textMessage.body))
-        XCTAssertFalse(content.contains(textAttributedString))
+        let content = try String(contentsOf: logFile, encoding: .utf8)
+        #expect(content.contains(textMessage.id.uniqueID.value))
+        #expect(!content.contains(textMessage.body))
+        #expect(!content.contains(textAttributedString))
         
-        XCTAssertTrue(content.contains(noticeMessage.id.uniqueID.value))
-        XCTAssertFalse(content.contains(noticeMessage.body))
-        XCTAssertFalse(content.contains(noticeAttributedString))
+        #expect(content.contains(noticeMessage.id.uniqueID.value))
+        #expect(!content.contains(noticeMessage.body))
+        #expect(!content.contains(noticeAttributedString))
         
-        XCTAssertTrue(content.contains(emoteMessage.id.uniqueID.value))
-        XCTAssertFalse(content.contains(emoteMessage.body))
-        XCTAssertFalse(content.contains(emoteAttributedString))
+        #expect(content.contains(emoteMessage.id.uniqueID.value))
+        #expect(!content.contains(emoteMessage.body))
+        #expect(!content.contains(emoteAttributedString))
         
-        XCTAssertTrue(content.contains(imageMessage.id.uniqueID.value))
-        XCTAssertFalse(content.contains(imageMessage.body))
+        #expect(content.contains(imageMessage.id.uniqueID.value))
+        #expect(!content.contains(imageMessage.body))
         
-        XCTAssertTrue(content.contains(videoMessage.id.uniqueID.value))
-        XCTAssertFalse(content.contains(videoMessage.body))
+        #expect(content.contains(videoMessage.id.uniqueID.value))
+        #expect(!content.contains(videoMessage.body))
         
-        XCTAssertTrue(content.contains(fileMessage.id.uniqueID.value))
-        XCTAssertFalse(content.contains(fileMessage.body))
+        #expect(content.contains(fileMessage.id.uniqueID.value))
+        #expect(!content.contains(fileMessage.body))
     }
+    
+    @Test
+    func rustMessageContentIsRedacted() throws {
+        try setupTest()
         
-    func validateRustMessageContentIsRedacted() throws {
         // Given message content that contain text
         let textString = "TextString"
         let rustTextMessage = TextMessageContent(body: "",
@@ -227,19 +221,19 @@ class LoggingTests: XCTestCase {
         let rustImageMessage = ImageMessageContent(filename: "ImageString",
                                                    caption: "ImageString",
                                                    formattedCaption: nil,
-                                                   source: MediaSource(noPointer: .init()),
+                                                   source: MediaSourceSDKMock(),
                                                    info: nil)
         
         let rustVideoMessage = VideoMessageContent(filename: "VideoString",
                                                    caption: "VideoString",
                                                    formattedCaption: nil,
-                                                   source: MediaSource(noPointer: .init()),
+                                                   source: MediaSourceSDKMock(),
                                                    info: nil)
         
         let rustFileMessage = FileMessageContent(filename: "FileString",
                                                  caption: "FileString",
                                                  formattedCaption: nil,
-                                                 source: MediaSource(noPointer: .init()),
+                                                 source: MediaSourceSDKMock(),
                                                  info: nil)
         
         // When logging that value
@@ -251,34 +245,34 @@ class LoggingTests: XCTestCase {
         MXLog.info(rustFileMessage)
         
         // Then the log file should not include the text content
-        guard let logFile = Tracing.logFiles.first else {
-            XCTFail(Constants.genericFailure)
-            return
-        }
-
-        let content = try String(contentsOf: logFile)
-        XCTAssertTrue(content.contains(String(describing: TextMessageContent.self)))
-        XCTAssertFalse(content.contains(textString))
+        let logFile = try #require(Tracing.logFiles.first)
         
-        XCTAssertTrue(content.contains(String(describing: NoticeMessageContent.self)))
-        XCTAssertFalse(content.contains(noticeString))
+        let content = try String(contentsOf: logFile, encoding: .utf8)
+        #expect(content.contains(String(describing: TextMessageContent.self)))
+        #expect(!content.contains(textString))
         
-        XCTAssertTrue(content.contains(String(describing: EmoteMessageContent.self)))
-        XCTAssertFalse(content.contains(emoteString))
+        #expect(content.contains(String(describing: NoticeMessageContent.self)))
+        #expect(!content.contains(noticeString))
         
-        XCTAssertTrue(content.contains(String(describing: ImageMessageContent.self)))
-        XCTAssertFalse(content.contains(rustImageMessage.filename))
+        #expect(content.contains(String(describing: EmoteMessageContent.self)))
+        #expect(!content.contains(emoteString))
         
-        XCTAssertTrue(content.contains(String(describing: VideoMessageContent.self)))
-        XCTAssertFalse(content.contains(rustVideoMessage.filename))
+        #expect(content.contains(String(describing: ImageMessageContent.self)))
+        #expect(!content.contains(rustImageMessage.filename))
         
-        XCTAssertTrue(content.contains(String(describing: FileMessageContent.self)))
-        XCTAssertFalse(content.contains(rustFileMessage.filename))
+        #expect(content.contains(String(describing: VideoMessageContent.self)))
+        #expect(!content.contains(rustVideoMessage.filename))
+        
+        #expect(content.contains(String(describing: FileMessageContent.self)))
+        #expect(!content.contains(rustFileMessage.filename))
     }
     
-    func testLogFileSorting() async throws {
+    @Test
+    func logFileSorting() throws {
+        try setupTest(redirectTracingFileWriter: false)
+        
         // Given a collection of log files.
-        XCTAssertTrue(Tracing.logFiles.isEmpty)
+        #expect(Tracing.logFiles.isEmpty)
         
         // When creating new logs.
         let logsFileDirectory = Tracing.logsDirectory
@@ -293,17 +287,17 @@ class LoggingTests: XCTestCase {
         }
         
         // Then the logs should be sorted chronologically (newest first) and not alphabetically.
-        XCTAssertEqual(Tracing.logFiles.map(\.lastPathComponent),
-                       ["console-nse.5.log",
-                        "console-nse.4.log",
-                        "console-nse.3.log",
-                        "console-nse.2.log",
-                        "console-nse.1.log",
-                        "console.5.log",
-                        "console.4.log",
-                        "console.3.log",
-                        "console.2.log",
-                        "console.1.log"])
+        #expect(Tracing.logFiles.map(\.lastPathComponent) ==
+            ["console-nse.5.log",
+             "console-nse.4.log",
+             "console-nse.3.log",
+             "console-nse.2.log",
+             "console-nse.1.log",
+             "console.5.log",
+             "console.4.log",
+             "console.3.log",
+             "console.2.log",
+             "console.1.log"])
         
         // When updating the oldest log file.
         let currentLogFile = logsFileDirectory.appending(path: "console.1.log")
@@ -313,16 +307,44 @@ class LoggingTests: XCTestCase {
         try fileHandle.close()
         
         // Then that file should now be the first log file.
-        XCTAssertEqual(Tracing.logFiles.map(\.lastPathComponent),
-                       ["console.1.log",
-                        "console-nse.5.log",
-                        "console-nse.4.log",
-                        "console-nse.3.log",
-                        "console-nse.2.log",
-                        "console-nse.1.log",
-                        "console.5.log",
-                        "console.4.log",
-                        "console.3.log",
-                        "console.2.log"])
+        #expect(Tracing.logFiles.map(\.lastPathComponent) ==
+            ["console.1.log",
+             "console-nse.5.log",
+             "console-nse.4.log",
+             "console-nse.3.log",
+             "console-nse.2.log",
+             "console-nse.1.log",
+             "console.5.log",
+             "console.4.log",
+             "console.3.log",
+             "console.2.log"])
+    }
+    
+    // MARK: - Helpers
+    
+    /// There is something weird with Rust logging where the file writing handle won't notice that the file it is writing
+    /// to has been deleted. So in order to run the tests that validate the file output, we must use a new directory
+    /// to start with a fresh state (as calling ``Tracing.deleteLogFiles`` would trigger the bug).
+    private func setupTest(name: String = #function, redirectTracingFileWriter: Bool = true) throws {
+        let testDirectory = URL.appGroupLogsDirectory.appending(component: name, directoryHint: .isDirectory)
+        
+        // CI retries re-run the suite on the same simulator, so clear out any log files left
+        // behind by a previous attempt. No writer points at the directory yet, so this is safe.
+        try? FileManager.default.removeItem(at: testDirectory)
+        
+        Tracing.logsDirectoryOverride = testDirectory
+        try? FileManager.default.createDirectory(at: testDirectory, withIntermediateDirectories: true)
+        
+        // Make an assertion before redirecting the logs as it the SDK is likely to put an empty file
+        // in the directory, ready to be written to.
+        #expect(Tracing.logFiles.isEmpty)
+        
+        if redirectTracingFileWriter {
+            try reloadTracingFileWriter(configuration: .init(path: testDirectory.path(percentEncoded: false),
+                                                             filePrefix: "console",
+                                                             fileSuffix: ".log",
+                                                             maxTotalSizeBytes: 1000,
+                                                             maxAgeSeconds: 1000))
+        }
     }
 }

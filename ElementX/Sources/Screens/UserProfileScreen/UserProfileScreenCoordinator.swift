@@ -1,5 +1,6 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 // Please see LICENSE files in the repository root for full details.
@@ -11,15 +12,15 @@ import SwiftUI
 struct UserProfileScreenCoordinatorParameters {
     let userID: String
     let isPresentedModally: Bool
-    let clientProxy: ClientProxyProtocol
-    let mediaProvider: MediaProviderProtocol
+    let userSession: UserSessionProtocol
+    let appHooks: AppHooks
+    let analytics: AnalyticsServiceProtocol
     let userIndicatorController: UserIndicatorControllerProtocol
-    let analytics: AnalyticsService
 }
 
 enum UserProfileScreenCoordinatorAction {
     case openDirectChat(roomID: String)
-    case startCall(roomID: String)
+    case startCall(roomProxy: JoinedRoomProxyProtocol, isVoiceCall: Bool)
     case dismiss
 }
 
@@ -36,10 +37,10 @@ final class UserProfileScreenCoordinator: CoordinatorProtocol {
     init(parameters: UserProfileScreenCoordinatorParameters) {
         viewModel = UserProfileScreenViewModel(userID: parameters.userID,
                                                isPresentedModally: parameters.isPresentedModally,
-                                               clientProxy: parameters.clientProxy,
-                                               mediaProvider: parameters.mediaProvider,
-                                               userIndicatorController: parameters.userIndicatorController,
-                                               analytics: parameters.analytics)
+                                               userSession: parameters.userSession,
+                                               appHooks: parameters.appHooks,
+                                               analytics: parameters.analytics,
+                                               userIndicatorController: parameters.userIndicatorController)
     }
     
     func start() {
@@ -49,8 +50,8 @@ final class UserProfileScreenCoordinator: CoordinatorProtocol {
             switch action {
             case .openDirectChat(let roomID):
                 actionsSubject.send(.openDirectChat(roomID: roomID))
-            case .startCall(let roomID):
-                actionsSubject.send(.startCall(roomID: roomID))
+            case .startCall(let roomProxy, let isVoiceCall):
+                actionsSubject.send(.startCall(roomProxy: roomProxy, isVoiceCall: isVoiceCall))
             case .dismiss:
                 actionsSubject.send(.dismiss)
             }

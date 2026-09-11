@@ -1,17 +1,21 @@
 //
-// Copyright 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2024-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
 import Foundation
+import MatrixRustSDK
+import MatrixRustSDKMocks
 
 extension TimelineProxyMock {
     struct Configuration {
         var isAutoUpdating = false
         var timelineStartReached = false
+        var timelineItemProvider: TimelineItemProviderProtocol?
     }
     
     @MainActor
@@ -19,17 +23,24 @@ extension TimelineProxyMock {
         self.init()
         
         sendMessageEventContentReturnValue = .success(())
+        sendMessageHtmlInReplyToEventIDIntentionalMentionsReturnValue = .success(())
+        editNewContentReturnValue = .success(())
+        buildMessageContentForHtmlIntentionalMentionsReturnValue = RoomMessageEventContentWithoutRelationSDKMock()
         paginateBackwardsRequestSizeReturnValue = .success(())
         paginateForwardsRequestSizeReturnValue = .success(())
         sendReadReceiptForTypeReturnValue = .success(())
+        createPollQuestionAnswersMaxSelectionsPollKindReturnValue = .success(())
+        editPollOriginalQuestionAnswersMaxSelectionsPollKindReturnValue = .success(())
         
-        if configuration.isAutoUpdating {
-            underlyingTimelineProvider = AutoUpdatingTimelineProviderMock()
+        if let provider = configuration.timelineItemProvider {
+            timelineItemProvider = provider
+        } else if configuration.isAutoUpdating {
+            timelineItemProvider = AutoUpdatingTimelineItemProviderMock()
         } else {
-            let timelineProvider = TimelineProviderMock()
-            timelineProvider.paginationState = .init(backward: configuration.timelineStartReached ? .timelineEndReached : .idle, forward: .timelineEndReached)
-            timelineProvider.underlyingMembershipChangePublisher = PassthroughSubject().eraseToAnyPublisher()
-            underlyingTimelineProvider = timelineProvider
+            let provider = TimelineItemProviderMock()
+            provider.paginationState = .init(backward: configuration.timelineStartReached ? .endReached : .idle, forward: .endReached)
+            provider.membershipChangePublisher = PassthroughSubject().eraseToAnyPublisher()
+            timelineItemProvider = provider
         }
     }
 }

@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -12,6 +13,8 @@ struct SettingsScreenCoordinatorParameters {
     let userSession: UserSessionProtocol
     let appSettings: AppSettings
     let isBugReportServiceEnabled: Bool
+    let isInSecondaryWindow: Bool
+    let userIndicatorController: UserIndicatorControllerProtocol
 }
 
 enum SettingsScreenCoordinatorAction {
@@ -19,14 +22,17 @@ enum SettingsScreenCoordinatorAction {
     case logout
     case secureBackup
     case userDetails
+    case userStatusEmojiPicker(EmojiPickerScreenContinuation)
     case analytics
     case appLock
     case bugReport
     case about
     case blockedUsers
+    case linkNewDevice
     case manageAccount(url: URL)
     case notifications
     case advancedSettings
+    case labs
     case developerOptions
     case deactivateAccount
 }
@@ -46,7 +52,9 @@ final class SettingsScreenCoordinator: CoordinatorProtocol {
     init(parameters: SettingsScreenCoordinatorParameters) {
         viewModel = SettingsScreenViewModel(userSession: parameters.userSession,
                                             appSettings: parameters.appSettings,
-                                            isBugReportServiceEnabled: parameters.isBugReportServiceEnabled)
+                                            isBugReportServiceEnabled: parameters.isBugReportServiceEnabled,
+                                            isInSecondaryWindow: parameters.isInSecondaryWindow,
+                                            userIndicatorController: parameters.userIndicatorController)
         
         viewModel.actions
             .sink { [weak self] action in
@@ -57,6 +65,10 @@ final class SettingsScreenCoordinator: CoordinatorProtocol {
                     actionsSubject.send(.dismiss)
                 case .userDetails:
                     actionsSubject.send(.userDetails)
+                case let .userStatusEmojiPicker(continuation):
+                    actionsSubject.send(.userStatusEmojiPicker(continuation))
+                case .linkNewDevice:
+                    actionsSubject.send(.linkNewDevice)
                 case let .manageAccount(url):
                     actionsSubject.send(.manageAccount(url: url))
                 case .analytics:
@@ -75,6 +87,8 @@ final class SettingsScreenCoordinator: CoordinatorProtocol {
                     actionsSubject.send(.notifications)
                 case .advancedSettings:
                     actionsSubject.send(.advancedSettings)
+                case .labs:
+                    actionsSubject.send(.labs)
                 case .developerOptions:
                     actionsSubject.send(.developerOptions)
                 case .logout:

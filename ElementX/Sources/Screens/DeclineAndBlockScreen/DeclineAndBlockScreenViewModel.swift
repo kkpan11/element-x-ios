@@ -1,14 +1,15 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
 import SwiftUI
 
-typealias DeclineAndBlockScreenViewModelType = StateStoreViewModel<DeclineAndBlockScreenViewState, DeclineAndBlockScreenViewAction>
+typealias DeclineAndBlockScreenViewModelType = StateStoreViewModelV2<DeclineAndBlockScreenViewState, DeclineAndBlockScreenViewAction>
 
 class DeclineAndBlockScreenViewModel: DeclineAndBlockScreenViewModelType, DeclineAndBlockScreenViewModelProtocol {
     let userID: String
@@ -20,7 +21,7 @@ class DeclineAndBlockScreenViewModel: DeclineAndBlockScreenViewModelType, Declin
     var actionsPublisher: AnyPublisher<DeclineAndBlockScreenViewModelAction, Never> {
         actionsSubject.eraseToAnyPublisher()
     }
-
+    
     init(userID: String,
          roomID: String,
          clientProxy: ClientProxyProtocol,
@@ -58,7 +59,7 @@ class DeclineAndBlockScreenViewModel: DeclineAndBlockScreenViewModelType, Declin
         case .success:
             var shouldShowFailure = false
             if state.bindings.shouldReport {
-                shouldShowFailure = await clientProxy.reportRoomForIdentifier(roomID, reason: state.bindings.reportReason.isEmpty ? nil : state.bindings.reportReason).isFailure
+                shouldShowFailure = await clientProxy.reportRoomForIdentifier(roomID, reason: state.bindings.reportReason).isFailure
             }
             
             if state.bindings.shouldBlockUser {
@@ -106,6 +107,6 @@ class DeclineAndBlockScreenViewModel: DeclineAndBlockScreenViewModelType, Declin
     }
     
     private func showSuccess() {
-        userIndicatorController.submitIndicator(.init(title: L10n.commonSuccess, iconName: "checkmark"))
+        userIndicatorController.submitIndicator(.init(title: L10n.commonSuccess, icon: \.check))
     }
 }

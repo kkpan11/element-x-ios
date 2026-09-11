@@ -1,13 +1,14 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
 
-extension ProcessInfo {
+nonisolated extension ProcessInfo {
     /// Flag indicating whether the app is running the unit tests.
     static var isRunningUnitTests: Bool {
         #if DEBUG
@@ -16,7 +17,7 @@ extension ProcessInfo {
         false
         #endif
     }
-
+    
     /// Flag indicating whether the app is running the UI tests.
     static var isRunningUITests: Bool {
         #if DEBUG
@@ -33,16 +34,33 @@ extension ProcessInfo {
         false
         #endif
     }
-
+    
+    static var isRunningAccessibilityTests: Bool {
+        #if DEBUG
+        processInfo.environment["ACCESSIBILITY_VIEW"] != nil
+        #else
+        false
+        #endif
+    }
+    
     /// Flag indicating whether the app is running the UI tests or unit tests.
     static var isRunningTests: Bool {
-        isRunningUITests || isRunningUnitTests || isRunningIntegrationTests
+        isRunningUITests || isRunningUnitTests || isRunningIntegrationTests || isRunningAccessibilityTests
     }
     
     /// The identifier of the screen to be loaded when running UI tests.
     static var testScreenID: UITestsScreenIdentifier? {
         #if DEBUG
         processInfo.environment["UI_TESTS_SCREEN"].flatMap(UITestsScreenIdentifier.init)
+        #else
+        nil
+        #endif
+    }
+    
+    /// The identifier of the preview that will be accessibility tested
+    static var accessibilityViewID: String? {
+        #if DEBUG
+        processInfo.environment["ACCESSIBILITY_VIEW"]
         #else
         nil
         #endif
@@ -66,5 +84,15 @@ extension ProcessInfo {
         #else
         false
         #endif
+    }
+    
+    var platform: String {
+        if #available(iOS 26.1, *), ProcessInfo.processInfo.isiOSAppOnVision {
+            "visionOS"
+        } else if ProcessInfo.processInfo.isiOSAppOnMac {
+            "macOS"
+        } else {
+            "iOS"
+        }
     }
 }

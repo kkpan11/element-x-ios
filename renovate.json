@@ -7,23 +7,27 @@
   "labels" : [
     "pr-misc"
   ],
+  "minimumReleaseAge": "7 days",
   "packageRules" : [
     {
       "matchManagers": ["github-actions"],
       "groupName" : "GitHub Actions"
     },
     {
-      "matchManagers": ["swift", "cocoapods"],
-      "groupName" : "Swift"
+      "matchManagers": ["xcodegen"],
+      "groupName": "Project Dependencies",
+      "schedule": [
+          "every 2 weeks on wednesday",
+      ]
     },
     {
-      "matchManagers": ["bundler"],
-      "groupName" : "Ruby"
+      "matchManagers": ["swift"],
+      "groupName" : "Tool Dependencies"
     },
     {
-      "matchPackageNames": ["codecov/codecov-action"],
-      "allowedVersions": "^3.0.0"
-    }
+      "managers": ["swift", "cocoapods"],
+      "matchPaths": ["compound-ios/Package.swift"],
+      "groupName": "Compound"
+    },
   ]
 }
-

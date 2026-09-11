@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -53,6 +54,19 @@ struct AppLockScreen: View {
                 .animation(.elementDefault, value: context.viewState.forcedLogoutIndicator)
         }
         .alert(item: $context.alertInfo)
+        .toolbar { toolbar }
+    }
+    
+    @ToolbarContentBuilder
+    var toolbar: some ToolbarContent {
+        if context.viewState.mode == .verifyDeviceOwner {
+            ToolbarItem(placement: .cancellationAction) {
+                ToolbarButton(role: .cancel) {
+                    context.send(viewAction: .cancelVerifyDeviceOwner)
+                }
+                .accessibilityIdentifier(A11yIdentifiers.appLockScreen.cancel)
+            }
+        }
     }
     
     var header: some View {
@@ -77,7 +91,7 @@ struct AppLockScreen: View {
     /// The row of dots showing how many digits have been entered.
     var pinInputField: some View {
         HStack(spacing: 24) {
-            /// The size of each dot within the PIN input field.
+            // The size of each dot within the PIN input field.
             let pinDotSize: CGFloat = 14
             Circle()
                 .fill(context.viewState.numberOfDigitsEntered > 0 ? .compound.iconPrimary : .compound.bgSubtlePrimary)
@@ -113,10 +127,17 @@ struct AppLockScreen: View {
 
 struct AppLockScreen_Previews: PreviewProvider, TestablePreview {
     static let viewModel = AppLockScreenViewModel(appLockService: AppLockServiceMock.mock())
+    static let verifyViewModel = AppLockScreenViewModel(appLockService: AppLockServiceMock.mock(), mode: .verifyDeviceOwner)
     
     static var previews: some View {
-        NavigationStack {
+        ElementNavigationStack {
             AppLockScreen(context: viewModel.context)
         }
+        .previewDisplayName("Unlock")
+        
+        ElementNavigationStack {
+            AppLockScreen(context: verifyViewModel.context)
+        }
+        .previewDisplayName("Verify")
     }
 }

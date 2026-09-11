@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -18,10 +19,14 @@ struct SessionSecurityState: Equatable {
 }
 
 // sourcery: AutoMockable
-protocol UserSessionProtocol {
+protocol UserSessionProtocol: Sendable {
     var clientProxy: ClientProxyProtocol { get }
     var mediaProvider: MediaProviderProtocol { get }
     var voiceMessageMediaManager: VoiceMessageMediaManagerProtocol { get }
+    var liveLocationManager: LiveLocationManagerProtocol { get }
+    
+    /// Scans media content, `nil` when no content scanner is configured for the server.
+    var contentScannerService: ContentScannerServiceProtocol? { get }
     
     var sessionSecurityStatePublisher: CurrentValuePublisher<SessionSecurityState, Never> { get }
     

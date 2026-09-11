@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,7 +10,7 @@ import Compound
 import SwiftUI
 
 struct LegalInformationScreen: View {
-    @ObservedObject var context: LegalInformationScreenViewModel.Context
+    let context: LegalInformationScreenViewModel.Context
     @Environment(\.openURL) private var openURL
     
     var body: some View {
@@ -32,7 +33,7 @@ struct LegalInformationScreen: View {
 // MARK: - Previews
 
 struct LegalInformationScreen_Previews: PreviewProvider, TestablePreview {
-    static let viewModel = LegalInformationScreenViewModel(appSettings: AppSettings())
+    static let viewModel = LegalInformationScreenViewModel(appSettings: .volatile())
     static var previews: some View {
         LegalInformationScreen(context: viewModel.context)
     }

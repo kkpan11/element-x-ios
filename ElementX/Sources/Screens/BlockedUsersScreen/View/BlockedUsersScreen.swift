@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,7 +10,7 @@ import Compound
 import SwiftUI
 
 struct BlockedUsersScreen: View {
-    @ObservedObject var context: BlockedUsersScreenViewModel.Context
+    @Bindable var context: BlockedUsersScreenViewModel.Context
     
     var body: some View {
         content
@@ -32,20 +33,27 @@ struct BlockedUsersScreen: View {
         } else {
             Form {
                 ForEach(context.viewState.blockedUsers, id: \.self) { user in
-                    ListRow(label: .avatar(title: user.displayName ?? user.userID,
-                                           description: user.displayName != nil ? user.userID : nil,
+                    ListRow(label: .avatar(title: user.displayName ?? user.id,
+                                           description: user.displayName != nil ? user.id : nil,
                                            icon: avatar(for: user)),
-                            details: .isWaiting(context.viewState.processingUserID == user.userID),
+                            details: .isWaiting(context.viewState.processingUserID == user.id),
                             kind: .button { context.send(viewAction: .unblockUser(user)) })
+                        .contextMenu {
+                            Button {
+                                context.send(viewAction: .copyUserID(user))
+                            } label: {
+                                Label(L10n.actionCopy, icon: \.copy)
+                            }
+                        }
                 }
             }
         }
     }
     
-    private func avatar(for user: UserProfileProxy) -> some View {
+    private func avatar(for user: UserProfile) -> some View {
         LoadableAvatarImage(url: user.avatarURL,
                             name: user.displayName,
-                            contentID: user.userID,
+                            contentID: user.id,
                             avatarSize: .user(on: .blockedUsers),
                             mediaProvider: context.mediaProvider)
             .accessibilityHidden(true)
@@ -56,12 +64,11 @@ struct BlockedUsersScreen: View {
 
 struct BlockedUsersScreen_Previews: PreviewProvider, TestablePreview {
     static let viewModel = BlockedUsersScreenViewModel(hideProfiles: true,
-                                                       clientProxy: ClientProxyMock(.init(userID: RoomMemberProxyMock.mockMe.userID)),
-                                                       mediaProvider: MediaProviderMock(configuration: .init()),
+                                                       userSession: UserSessionMock(.init(clientProxy: ClientProxyMock(.init(userID: RoomMemberProxyMock.mockMe.userID)))),
                                                        userIndicatorController: UserIndicatorControllerMock())
     
     static var previews: some View {
-        NavigationStack {
+        ElementNavigationStack {
             BlockedUsersScreen(context: viewModel.context)
         }
     }

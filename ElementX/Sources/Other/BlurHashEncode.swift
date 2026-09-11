@@ -1,3 +1,25 @@
+/*
+ Copyright (c) 2018 Wolt Enterprises
+ 
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ 
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
+ 
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+ */
+
 // swiftlint:disable all
 
 import UIKit
@@ -53,7 +75,7 @@ extension UIImage {
         hash += sizeFlag.encode83(length: 1)
         
         let maximumValue: Float
-        if ac.count > 0 {
+        if !ac.isEmpty {
             let actualMaximumValue = ac.map { max(abs($0.0), abs($0.1), abs($0.2)) }.max()!
             let quantisedMaximumValue = Int(max(0, min(82, floor(actualMaximumValue * 166 - 0.5))))
             maximumValue = Float(quantisedMaximumValue + 1) / 166
@@ -115,14 +137,20 @@ private func signPow(_ value: Float, _ exp: Float) -> Float {
 
 private func linearTosRGB(_ value: Float) -> Int {
     let v = max(0, min(1, value))
-    if v <= 0.0031308 { return Int(v * 12.92 * 255 + 0.5) }
-    else { return Int((1.055 * pow(v, 1 / 2.4) - 0.055) * 255 + 0.5) }
+    if v <= 0.0031308 {
+        return Int(v * 12.92 * 255 + 0.5)
+    } else {
+        return Int((1.055 * pow(v, 1 / 2.4) - 0.055) * 255 + 0.5)
+    }
 }
 
 private func sRGBToLinear<Type: BinaryInteger>(_ value: Type) -> Float {
     let v = Float(Int64(value)) / 255
-    if v <= 0.04045 { return v / 12.92 }
-    else { return pow((v + 0.055) / 1.055, 2.4) }
+    if v <= 0.04045 {
+        return v / 12.92
+    } else {
+        return pow((v + 0.055) / 1.055, 2.4)
+    }
 }
 
 private let encodeCharacters: [String] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~".map { String($0) }

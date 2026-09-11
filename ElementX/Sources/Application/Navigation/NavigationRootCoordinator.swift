@@ -1,14 +1,15 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import SwiftUI
 
-class NavigationRootCoordinator: ObservableObject, CoordinatorProtocol, CustomStringConvertible {
-    @Published fileprivate var rootModule: NavigationModule? {
+@Observable class NavigationRootCoordinator: CoordinatorProtocol, CustomStringConvertible {
+    fileprivate var rootModule: NavigationModule? {
         didSet {
             if let oldValue {
                 oldValue.tearDown()
@@ -26,7 +27,7 @@ class NavigationRootCoordinator: ObservableObject, CoordinatorProtocol, CustomSt
         rootModule?.coordinator
     }
     
-    @Published fileprivate var sheetModule: NavigationModule? {
+    fileprivate var sheetModule: NavigationModule? {
         didSet {
             if let oldValue {
                 logPresentationChange("Remove sheet", oldValue)
@@ -47,24 +48,8 @@ class NavigationRootCoordinator: ObservableObject, CoordinatorProtocol, CustomSt
         sheetModule?.coordinator
     }
     
-    @Published fileprivate var overlayModule: NavigationModule? {
-        didSet {
-            if let oldValue {
-                logPresentationChange("Remove overlay", oldValue)
-                oldValue.tearDown()
-            }
-            
-            if let overlayModule {
-                logPresentationChange("Set overlay", overlayModule)
-                overlayModule.coordinator?.start()
-            }
-        }
-    }
-    
-    /// The currently displayed overlay coordinator
-    var overlayCoordinator: (any CoordinatorProtocol)? {
-        overlayModule?.coordinator
-    }
+    /// The lowest-level `AlertInfo`, directly available to the root of the app.
+    var alertInfo: AlertInfo<UUID>?
     
     /// Sets or replaces the presented coordinator
     /// - Parameter coordinator: the coordinator to display
@@ -92,40 +77,15 @@ class NavigationRootCoordinator: ObservableObject, CoordinatorProtocol, CustomSt
         if sheetModule?.coordinator === coordinator {
             fatalError("Cannot use the same coordinator more than once")
         }
-
+        
         var transaction = Transaction()
         transaction.disablesAnimations = !animated
-
+        
         withTransaction(transaction) {
             sheetModule = NavigationModule(coordinator, dismissalCallback: dismissalCallback)
         }
     }
     
-    /// Present an overlay on top of the split view
-    /// - Parameters:
-    ///   - coordinator: the coordinator to display
-    ///   - animated: whether the transition should be animated
-    ///   - dismissalCallback: called when the overlay has been dismissed, programatically or otherwise
-    func setOverlayCoordinator(_ coordinator: (any CoordinatorProtocol)?,
-                               animated: Bool = true,
-                               dismissalCallback: (() -> Void)? = nil) {
-        guard let coordinator else {
-            overlayModule = nil
-            return
-        }
-        
-        if overlayModule?.coordinator === coordinator {
-            fatalError("Cannot use the same coordinator more than once")
-        }
-
-        var transaction = Transaction()
-        transaction.disablesAnimations = !animated
-
-        withTransaction(transaction) {
-            overlayModule = NavigationModule(coordinator, dismissalCallback: dismissalCallback)
-        }
-    }
-        
     // MARK: - CoordinatorProtocol
     
     func toPresentable() -> AnyView {
@@ -152,24 +112,16 @@ class NavigationRootCoordinator: ObservableObject, CoordinatorProtocol, CustomSt
 }
 
 private struct NavigationRootCoordinatorView: View {
-    @ObservedObject var rootCoordinator: NavigationRootCoordinator
+    @Bindable var rootCoordinator: NavigationRootCoordinator
     
     var body: some View {
         ZStack {
             rootCoordinator.rootModule?.coordinator?.toPresentable()
         }
+        .alert(item: $rootCoordinator.alertInfo)
         .animation(.elementDefault, value: rootCoordinator.rootModule)
         .sheet(item: $rootCoordinator.sheetModule) { module in
             module.coordinator?.toPresentable()
-        }
-        .overlay {
-            Group {
-                if let coordinator = rootCoordinator.overlayModule?.coordinator {
-                    coordinator.toPresentable()
-                        .transition(.opacity)
-                }
-            }
-            .animation(.elementDefault, value: rootCoordinator.overlayModule)
         }
     }
 }

@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -16,7 +17,6 @@ enum SessionVerificationScreenViewAction {
     case acceptVerificationRequest
     case ignoreVerificationRequest
     case requestVerification
-    case startSasVerification
     case restart
     case accept
     case decline
@@ -32,25 +32,15 @@ struct SessionVerificationScreenViewState: BindableState {
     
     var headerIcon: (keyPath: KeyPath<CompoundIcons, Image>, style: BigIcon.Style) {
         switch verificationState {
-        case .initial:
+        case .initial, .acceptingVerificationRequest, .requestingVerification,
+             .verificationRequestAccepted, .startingSasVerification, .sasVerificationStarted,
+             .cancelling:
             switch flow {
             case .deviceInitiator, .deviceResponder:
                 return (\.devices, .defaultSolid)
-            case .userIntiator, .userResponder:
+            case .userInitiator, .userResponder:
                 return (\.userProfileSolid, .defaultSolid)
             }
-        case .acceptingVerificationRequest:
-            return (\.devices, .defaultSolid)
-        case .requestingVerification:
-            return (\.devices, .defaultSolid)
-        case .verificationRequestAccepted:
-            return (\.reaction, .defaultSolid)
-        case .startingSasVerification:
-            return (\.devices, .defaultSolid)
-        case .sasVerificationStarted:
-            return (\.devices, .defaultSolid)
-        case .cancelling:
-            return (\.lockSolid, .defaultSolid)
         case .showingChallenge:
             return (\.reaction, .defaultSolid)
         case .acceptingChallenge:
@@ -70,25 +60,17 @@ struct SessionVerificationScreenViewState: BindableState {
     
     var title: String? {
         switch verificationState {
-        case .initial:
+        case .initial, .acceptingVerificationRequest, .requestingVerification,
+             .verificationRequestAccepted, .startingSasVerification, .sasVerificationStarted,
+             .cancelling:
             switch flow {
             case .deviceInitiator:
                 return L10n.screenSessionVerificationUseAnotherDeviceTitle
-            case .userIntiator:
+            case .userInitiator:
                 return L10n.screenSessionVerificationUserInitiatorTitle
             case .deviceResponder, .userResponder:
                 return L10n.screenSessionVerificationRequestTitle
             }
-        case .acceptingVerificationRequest:
-            return waitingTitle
-        case .requestingVerification:
-            return waitingTitle
-        case .verificationRequestAccepted:
-            return L10n.screenSessionVerificationCompareEmojisTitle
-        case .startingSasVerification:
-            return waitingTitle
-        case .sasVerificationStarted:
-            return waitingTitle
         case .showingChallenge:
             return L10n.screenSessionVerificationCompareEmojisTitle
         case .acceptingChallenge:
@@ -96,64 +78,48 @@ struct SessionVerificationScreenViewState: BindableState {
         case .decliningChallenge:
             return L10n.screenSessionVerificationCompareEmojisTitle
         case .verified:
-            return L10n.commonVerificationComplete
-        case .cancelling:
-            return waitingTitle
+            switch flow {
+            case .deviceInitiator, .deviceResponder:
+                return L10n.screenSessionVerificationDeviceVerified
+            case .userInitiator, .userResponder:
+                return L10n.commonVerificationComplete
+            }
         case .cancelled:
             return L10n.commonVerificationFailed
         }
     }
     
-    private var waitingTitle: String {
-        switch flow {
-        case .deviceInitiator, .deviceResponder:
-            return L10n.screenSessionVerificationWaitingOtherDeviceTitle
-        case .userIntiator, .userResponder:
-            return L10n.screenSessionVerificationWaitingOtherUserTitle
-        }
-    }
-        
     var message: String {
         switch verificationState {
-        case .initial:
+        case .initial, .acceptingVerificationRequest, .requestingVerification,
+             .verificationRequestAccepted, .startingSasVerification, .sasVerificationStarted,
+             .cancelling:
             switch flow {
             case .deviceInitiator:
                 return L10n.screenSessionVerificationUseAnotherDeviceSubtitle
-            case .userIntiator:
+            case .userInitiator:
                 return L10n.screenSessionVerificationUserInitiatorSubtitle
             case .deviceResponder:
                 return L10n.screenSessionVerificationRequestSubtitle
             case .userResponder:
                 return L10n.screenSessionVerificationUserResponderSubtitle
             }
-        case .acceptingVerificationRequest:
-            return waitingMessage
-        case .requestingVerification:
-            return waitingMessage
-        case .verificationRequestAccepted:
-            return L10n.screenSessionVerificationRequestAcceptedSubtitle
-        case .startingSasVerification:
-            return waitingMessage
-        case .sasVerificationStarted:
-            return waitingMessage
         case .acceptingChallenge:
             return L10n.screenSessionVerificationCompareEmojisSubtitle
         case .decliningChallenge:
             return L10n.screenSessionVerificationCompareEmojisSubtitle
-        case .cancelling:
-            return waitingMessage
         case .showingChallenge:
             switch flow {
             case .deviceInitiator, .deviceResponder:
                 return L10n.screenSessionVerificationCompareEmojisSubtitle
-            case .userIntiator, .userResponder:
+            case .userInitiator, .userResponder:
                 return L10n.screenSessionVerificationCompareEmojisUserSubtitle
             }
         case .verified:
             switch flow {
             case .deviceInitiator, .deviceResponder:
                 return L10n.screenSessionVerificationCompleteSubtitle
-            case .userIntiator, .userResponder:
+            case .userInitiator, .userResponder:
                 return L10n.screenSessionVerificationCompleteUserSubtitle
             }
             
@@ -162,7 +128,22 @@ struct SessionVerificationScreenViewState: BindableState {
         }
     }
     
-    private var waitingMessage: String {
-        L10n.screenSessionVerificationWaitingSubtitle
+    var isWaiting: Bool {
+        switch verificationState {
+        case .acceptingVerificationRequest, .requestingVerification, .verificationRequestAccepted,
+             .startingSasVerification, .sasVerificationStarted, .cancelling:
+            true
+        default:
+            false
+        }
+    }
+    
+    var showIgnoreButton: Bool {
+        switch flow {
+        case .deviceResponder, .userResponder:
+            true
+        default:
+            false
+        }
     }
 }

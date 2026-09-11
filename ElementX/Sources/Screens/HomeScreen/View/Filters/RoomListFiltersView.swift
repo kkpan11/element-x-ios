@@ -1,10 +1,12 @@
 //
-// Copyright 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2024-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
+import Compound
 import SwiftUI
 
 struct RoomListFiltersView: View {
@@ -14,7 +16,9 @@ struct RoomListFiltersView: View {
     
     /// When you connect a mouse on macOS the scrollbars aren't hidden. This is some extra padding
     /// applied to the scroll view content to make sure the bars don't overlap the filters.
-    private var macScrollBarPadding: CGFloat { ProcessInfo.processInfo.isiOSAppOnMac ? 16 : 0 }
+    private var macScrollBarPadding: CGFloat {
+        ProcessInfo.processInfo.isiOSAppOnMac ? 16 : 0
+    }
     
     var body: some View {
         ScrollViewReader { proxy in
@@ -54,16 +58,18 @@ struct RoomListFiltersView: View {
     }
     
     private func clearButton(scrollViewProxy: ScrollViewProxy) -> some View {
-        Button(action: {
+        Button {
             withAnimation(.easeInOut(duration: 0.2).disabledDuringTests()) {
                 state.clearFilters()
                 scrollViewProxy.scrollTo(leadingID, anchor: .leading)
             }
-        }, label: {
-            Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 24))
-                .foregroundColor(.compound.bgActionPrimaryRest)
-        })
+        } label: {
+            CompoundIcon(\.close, size: .xSmall, relativeTo: .compound.bodyLG)
+                .foregroundStyle(.compound.iconOnSolidPrimary)
+                .padding(4)
+                .background(.compound.bgActionPrimaryRest, in: .circle)
+        }
+        .accessibilityLabel(L10n.screenRoomlistClearFilters)
     }
     
     private func getBinding(for filter: RoomListFilter, scrollViewProxy: ScrollViewProxy) -> Binding<Bool> {
@@ -86,7 +92,10 @@ struct RoomListFiltersView: View {
 
 struct RoomListFiltersView_Previews: PreviewProvider, TestablePreview {
     static var previews: some View {
-        RoomListFiltersView(state: .constant(.init()))
-        RoomListFiltersView(state: .constant(.init(activeFilters: [.rooms, .favourites])))
+        RoomListFiltersView(state: .constant(.init(appSettings: .volatile())))
+        RoomListFiltersView(state: .constant(.init(activeFilters: [.rooms, .favourites],
+                                                   appSettings: .volatile())))
+        RoomListFiltersView(state: .constant(.init(activeFilters: [.lowPriority],
+                                                   appSettings: .volatile())))
     }
 }

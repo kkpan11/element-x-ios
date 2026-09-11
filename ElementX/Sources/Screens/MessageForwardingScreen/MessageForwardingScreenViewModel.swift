@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -21,18 +22,17 @@ class MessageForwardingScreenViewModel: MessageForwardingScreenViewModelType, Me
     var actions: AnyPublisher<MessageForwardingScreenViewModelAction, Never> {
         actionsSubject.eraseToAnyPublisher()
     }
-
+    
     init(forwardingItem: MessageForwardingItem,
-         clientProxy: ClientProxyProtocol,
+         userSession: UserSessionProtocol,
          roomSummaryProvider: RoomSummaryProviderProtocol,
-         userIndicatorController: UserIndicatorControllerProtocol,
-         mediaProvider: MediaProviderProtocol) {
+         userIndicatorController: UserIndicatorControllerProtocol) {
         self.forwardingItem = forwardingItem
-        self.clientProxy = clientProxy
+        clientProxy = userSession.clientProxy
         self.roomSummaryProvider = roomSummaryProvider
         self.userIndicatorController = userIndicatorController
         
-        super.init(initialViewState: MessageForwardingScreenViewState(), mediaProvider: mediaProvider)
+        super.init(initialViewState: MessageForwardingScreenViewState(), mediaProvider: userSession.mediaProvider)
         
         roomSummaryProvider.roomListPublisher
             .receive(on: DispatchQueue.main)
@@ -63,7 +63,11 @@ class MessageForwardingScreenViewModel: MessageForwardingScreenViewModelType, Me
         case .send:
             Task { await forward() }
         case .selectRoom(let roomID):
-            state.selectedRoomID = roomID
+            if state.selectedRoomIDs.contains(roomID) == false, state.selectedRoomIDs.count < state.maxRoomSelectionCount {
+                state.selectedRoomIDs.insert(roomID)
+            } else {
+                state.selectedRoomIDs.remove(roomID)
+            }
         case .reachedTop:
             updateVisibleRange(edge: .top)
         case .reachedBottom:
@@ -114,23 +118,30 @@ class MessageForwardingScreenViewModel: MessageForwardingScreenViewModelType, Me
     }
     
     private func forward() async {
-        guard let roomID = state.selectedRoomID else {
+        guard !state.selectedRoomIDs.isEmpty else {
             fatalError()
         }
         
-        guard case let .joined(targetRoomProxy) = await clientProxy.roomForIdentifier(roomID) else {
-            MXLog.error("Failed retrieving room to forward to with id: \(roomID)")
-            userIndicatorController.submitIndicator(UserIndicator(title: L10n.errorUnknown))
-            return
+        var succeededRoomIdentifiers = [String]()
+        
+        for roomID in state.selectedRoomIDs {
+            guard case let .joined(targetRoomProxy) = await clientProxy.roomForIdentifier(roomID) else {
+                MXLog.error("Failed retrieving room to forward to with id: \(roomID)")
+                userIndicatorController.submitIndicator(UserIndicator(title: L10n.errorUnknown))
+                continue
+            }
+            
+            if case .failure(let error) = await targetRoomProxy.timeline.sendMessageEventContent(forwardingItem.content) {
+                MXLog.error("Failed forwarding message with error: \(error)")
+                userIndicatorController.submitIndicator(UserIndicator(title: L10n.errorUnknown))
+                continue
+            }
+            
+            succeededRoomIdentifiers.append(roomID)
         }
         
-        if case .failure(let error) = await targetRoomProxy.timeline.sendMessageEventContent(forwardingItem.content) {
-            MXLog.error("Failed forwarding message with error: \(error)")
-            userIndicatorController.submitIndicator(UserIndicator(title: L10n.errorUnknown))
-            return
+        if !succeededRoomIdentifiers.isEmpty {
+            actionsSubject.send(.sent(roomIDs: succeededRoomIdentifiers))
         }
-        
-        // Timelines are cached - the local echo will be visible when fetching the room by its ID.
-        actionsSubject.send(.sent(roomID: roomID))
     }
 }

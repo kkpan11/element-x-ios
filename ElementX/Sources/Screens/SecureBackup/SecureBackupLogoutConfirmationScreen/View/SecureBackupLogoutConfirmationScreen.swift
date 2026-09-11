@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -10,7 +11,7 @@ import Compound
 import SwiftUI
 
 struct SecureBackupLogoutConfirmationScreen: View {
-    @ObservedObject var context: SecureBackupLogoutConfirmationScreenViewModel.Context
+    @Bindable var context: SecureBackupLogoutConfirmationScreenViewModel.Context
     
     var body: some View {
         FullscreenDialog {
@@ -27,7 +28,7 @@ struct SecureBackupLogoutConfirmationScreen: View {
         .backgroundStyle(.compound.bgCanvasDefault)
         .alert(item: $context.alertInfo)
     }
-        
+    
     @ViewBuilder
     private var content: some View {
         Text(title)
@@ -55,7 +56,6 @@ struct SecureBackupLogoutConfirmationScreen: View {
         }
     }
     
-    @ViewBuilder
     private var footer: some View {
         VStack(spacing: 16.0) {
             if case .saveRecoveryKey = context.viewState.mode {
@@ -110,6 +110,7 @@ struct SecureBackupLogoutConfirmationScreen: View {
 
 // MARK: - Previews
 
+@available(iOS 26.0, *)
 struct SecureBackupLogoutConfirmationScreen_Previews: PreviewProvider, TestablePreview {
     static let viewModel = makeViewModel(mode: .saveRecoveryKey)
     static let waitingViewModel = makeViewModel(mode: .waitingToStart(hasStalled: false))
@@ -117,40 +118,40 @@ struct SecureBackupLogoutConfirmationScreen_Previews: PreviewProvider, TestableP
     static let offlineViewModel = makeViewModel(mode: .offline)
     
     static var previews: some View {
-        NavigationStack {
+        ElementNavigationStack {
             SecureBackupLogoutConfirmationScreen(context: viewModel.context)
         }
         .previewDisplayName("Confirmation")
         
-        NavigationStack {
+        ElementNavigationStack {
             SecureBackupLogoutConfirmationScreen(context: waitingViewModel.context)
         }
         .previewDisplayName("Waiting")
-        .snapshotPreferences(expect: waitingViewModel.context.$viewState.map { $0.mode == .waitingToStart(hasStalled: false) })
+        .snapshotPreferences(expect: waitingViewModel.context.observe(\.viewState.mode).map { $0 == .waitingToStart(hasStalled: false) })
         
-        NavigationStack {
+        ElementNavigationStack {
             SecureBackupLogoutConfirmationScreen(context: ongoingViewModel.context)
         }
         .previewDisplayName("Ongoing")
-        .snapshotPreferences(expect: ongoingViewModel.context.$viewState.map { $0.mode == .backupOngoing(progress: 0.5) })
+        .snapshotPreferences(expect: ongoingViewModel.context.observe(\.viewState.mode).map { $0 == .backupOngoing(progress: 0.5) })
         
         // Uses the same view model as Waiting but with a different expectation.
-        NavigationStack {
+        ElementNavigationStack {
             SecureBackupLogoutConfirmationScreen(context: waitingViewModel.context)
         }
         .previewDisplayName("Stalled")
-        .snapshotPreferences(expect: waitingViewModel.context.$viewState.map { $0.mode == .waitingToStart(hasStalled: true) })
+        .snapshotPreferences(expect: waitingViewModel.context.observe(\.viewState.mode).map { $0 == .waitingToStart(hasStalled: true) })
         
-        NavigationStack {
+        ElementNavigationStack {
             SecureBackupLogoutConfirmationScreen(context: offlineViewModel.context)
         }
         .previewDisplayName("Offline")
-        .snapshotPreferences(expect: offlineViewModel.context.$viewState.map { $0.mode == .offline })
+        .snapshotPreferences(expect: offlineViewModel.context.observe(\.viewState.mode).map { $0 == .offline })
     }
     
     static func makeViewModel(mode: SecureBackupLogoutConfirmationScreenViewMode) -> SecureBackupLogoutConfirmationScreenViewModel {
         let secureBackupController = SecureBackupControllerMock()
-        secureBackupController.underlyingKeyBackupState = CurrentValueSubject<SecureBackupKeyBackupState, Never>(.enabled).asCurrentValuePublisher()
+        secureBackupController.keyBackupState = CurrentValueSubject<SecureBackupKeyBackupState, Never>(.enabled).asCurrentValuePublisher()
         
         secureBackupController.waitForKeyBackupUploadUploadStateSubjectClosure = { uploadStateSubject in
             if case .backupOngoing = mode {
@@ -160,15 +161,10 @@ struct SecureBackupLogoutConfirmationScreen_Previews: PreviewProvider, TestableP
             return .success(())
         }
         
-        let reachability: NetworkMonitorReachability = mode == .offline ? .unreachable : .reachable
-        let networkMonitor = NetworkMonitorMock()
-        networkMonitor.underlyingReachabilityPublisher = CurrentValueSubject<NetworkMonitorReachability, Never>(reachability).asCurrentValuePublisher()
-        
-        let appMediator = AppMediatorMock()
-        appMediator.underlyingNetworkMonitor = networkMonitor
+        let reachability: HomeserverReachability = mode == .offline ? .unreachable : .reachable
         
         let viewModel = SecureBackupLogoutConfirmationScreenViewModel(secureBackupController: secureBackupController,
-                                                                      appMediator: appMediator)
+                                                                      homeserverReachabilityPublisher: .init(reachability))
         
         if mode != .saveRecoveryKey {
             viewModel.context.send(viewAction: .logout)

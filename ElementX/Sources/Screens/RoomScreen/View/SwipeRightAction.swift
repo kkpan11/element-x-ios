@@ -1,5 +1,6 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 // Please see LICENSE files in the repository root for full details.
@@ -28,10 +29,7 @@ struct SwipeRightAction<Label: View>: ViewModifier {
     let action: () -> Void
     
     func body(content: Content) -> some View {
-        content
-            .offset(x: xOffset, y: 0.0)
-            .animation(.interactiveSpring().speed(0.5), value: xOffset)
-            .timelineGesture(gesture)
+        mainContent(content: content)
             .onChange(of: dragGestureActive) { _, newValue in
                 if newValue == true {
                     if shouldStartAction() {
@@ -51,53 +49,53 @@ struct SwipeRightAction<Label: View>: ViewModifier {
             }
     }
     
-    private var gesture: some Gesture {
-        DragGesture()
-            .updating($dragGestureActive) { _, state, _ in
-                // Available actions should be computed on the fly so we use a gesture state change
-                // to ask whether the move should be started or not.
-                state = true
-            }
-            .onChanged { value in
-                guard canStartAction, value.translation.width > value.translation.height else {
-                    return
-                }
-                
-                // Due to https://forums.developer.apple.com/forums/thread/760035 we had to make
-                // the drag a simultaneous gesture otherwise it was impossible to scroll the timeline.
-                // Therefore we need to prevent the animation to run if the user is to scrolling vertically.
-                // It would be nice if we could somehow abort the gesture in this case.
-                let width: CGFloat = if value.translation.width > abs(value.translation.height) {
-                    value.translation.width
-                } else {
-                    0.0
-                }
-                
-                // We want to add a spring like behaviour to the drag in which the view
-                // moves slower the more it's dragged. We use a circular easing function
-                // to generate those values up to the `swipeThreshold`
-                // The final translation will be between 0 and `swipeThreshold` with the action being enabled from
-                // `actionThreshold` onwards
-                let screenWidthNormalisedTranslation = max(0.0, min(width, swipeThreshold)) / swipeThreshold
-                let easedTranslation = circularEaseOut(screenWidthNormalisedTranslation)
-                xOffset = easedTranslation * xOffsetThreshold
-                
-                if xOffset > actionThreshold {
-                    if !hasReachedActionThreshold {
-                        feedbackGenerator.impactOccurred()
-                        hasReachedActionThreshold = true
+    private func mainContent(content: Content) -> some View {
+        content
+            .offset(x: xOffset, y: 0.0)
+            .animation(.interactiveSpring().speed(0.5), value: xOffset)
+            .gesture(PanGestureRepresentable { gesture in
+                switch gesture.state {
+                case .ended, .cancelled, .failed:
+                    if xOffset > actionThreshold {
+                        action()
                     }
-                } else {
-                    hasReachedActionThreshold = false
+                    
+                    xOffset = 0.0
+                default:
+                    guard shouldStartAction() else {
+                        return
+                    }
+                    let translation = gesture.translation(in: nil)
+                    
+                    // Due to https://forums.developer.apple.com/forums/thread/760035 we had to make
+                    // the drag a simultaneous gesture otherwise it was impossible to scroll the timeline.
+                    // Therefore we need to prevent the animation to run if the user is to scrolling vertically.
+                    // It would be nice if we could somehow abort the gesture in this case.
+                    let width: CGFloat = if translation.x > abs(translation.y) {
+                        translation.x
+                    } else {
+                        0.0
+                    }
+                    
+                    // We want to add a spring like behaviour to the drag in which the view
+                    // moves slower the more it's dragged. We use a circular easing function
+                    // to generate those values up to the `swipeThreshold`
+                    // The final translation will be between 0 and `swipeThreshold` with the action being enabled from
+                    // `actionThreshold` onwards
+                    let screenWidthNormalisedTranslation = max(0.0, min(width, swipeThreshold)) / swipeThreshold
+                    let easedTranslation = circularEaseOut(screenWidthNormalisedTranslation)
+                    xOffset = easedTranslation * xOffsetThreshold
+                    
+                    if xOffset > actionThreshold {
+                        if !hasReachedActionThreshold {
+                            feedbackGenerator.impactOccurred()
+                            hasReachedActionThreshold = true
+                        }
+                    } else {
+                        hasReachedActionThreshold = false
+                    }
                 }
-            }
-            .onEnded { _ in
-                if xOffset > actionThreshold {
-                    action()
-                }
-                
-                xOffset = 0.0
-            }
+            })
     }
     
     /// Used to compute the horizontal translation amount.
@@ -113,28 +111,18 @@ extension View {
                           action: @escaping () -> Void) -> some View {
         modifier(SwipeRightAction(label: label, shouldStartAction: shouldStartAction, action: action))
     }
-    
-    @ViewBuilder
-    fileprivate func timelineGesture(_ gesture: some Gesture) -> some View {
-        if #available(iOS 18.0, *) {
-            // iOS 18 has a bug https://forums.developer.apple.com/forums/thread/760035 and you
-            // can't scroll the timeline when `gesture` is used.
-            simultaneousGesture(gesture)
-        } else {
-            // Equally on iOS 17 you can't scroll the timeline when `simultaneousGesture` is used.
-            self.gesture(gesture)
-        }
-    }
 }
 
 struct SwipeRightAction_Previews: PreviewProvider, TestablePreview {
-    static var previews: some View { Preview() }
+    static var previews: some View {
+        Preview()
+    }
     
     struct Preview: View {
         @State private var isPresentingSheet = false
         
         var body: some View {
-            NavigationStack {
+            ElementNavigationStack {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("This is a message from somebody with a couple of lines of text.")
@@ -156,6 +144,41 @@ struct SwipeRightAction_Previews: PreviewProvider, TestablePreview {
                 Text("Action triggered!")
                     .presentationDetents([.medium])
             }
+        }
+    }
+}
+
+/// Fixes the issue on iOS 18 where DragGesture conflicts with the scroll view
+/// https://github.com/feedback-assistant/reports/issues/542#issuecomment-2581322968
+private struct PanGestureRepresentable: UIGestureRecognizerRepresentable {
+    var handle: (UIPanGestureRecognizer) -> Void
+    
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
+        .init()
+    }
+    
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let gesture = UIPanGestureRecognizer()
+        gesture.delegate = context.coordinator
+        gesture.isEnabled = true
+        return gesture
+    }
+    
+    func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        handle(recognizer)
+    }
+    
+    class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            false
+        }
+        
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let panRecognizer = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            
+            let velocity = panRecognizer.velocity(in: gestureRecognizer.view)
+            return abs(velocity.y) < abs(velocity.x)
         }
     }
 }

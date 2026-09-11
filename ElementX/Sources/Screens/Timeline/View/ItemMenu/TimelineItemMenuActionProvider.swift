@@ -1,21 +1,23 @@
 //
-// Copyright 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2024-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
 
-@MainActor
 struct TimelineItemMenuActionProvider {
     let timelineItem: RoomTimelineItemProtocol
+    let canCurrentUserSendMessage: Bool
     let canCurrentUserRedactSelf: Bool
     let canCurrentUserRedactOthers: Bool
     let canCurrentUserPin: Bool
     let pinnedEventIDs: Set<String>
-    let isDM: Bool
     let isViewSourceEnabled: Bool
+    let areThreadsEnabled: Bool
+    let isMultiSelectEnabled: Bool
     let timelineKind: TimelineKind
     let emojiProvider: EmojiProviderProtocol
     
@@ -25,14 +27,14 @@ struct TimelineItemMenuActionProvider {
             // Don't show a context menu for non-event based items.
             return nil
         }
-
+        
         if timelineItem is StateRoomTimelineItem {
             // Don't show a context menu for state events.
             return nil
         }
-
-        if let encryptedItem = timelineItem as? EncryptedRoomTimelineItem {
-            return makeEncryptedItemActions(encryptedItem)
+        
+        if timelineItem is EncryptedRoomTimelineItem {
+            return makeEncryptedItemActions()
         }
         
         var actions: [TimelineItemMenuAction] = []
@@ -45,12 +47,18 @@ struct TimelineItemMenuActionProvider {
         if canRedactItem(item), let poll = item.pollIfAvailable, !poll.hasEnded, let eventID = item.id.eventID {
             actions.append(.endPoll(pollStartID: eventID))
         }
-
-        if item.canBeRepliedTo {
+        
+        if item.canBeRepliedTo, canCurrentUserSendMessage {
             if let messageItem = item as? EventBasedMessageTimelineItemProtocol {
-                actions.append(.reply(isThread: messageItem.properties.isThreaded))
+                // If threads are enabled we will have the dedicated `replyInThread` action
+                // so there is no need to make the normal reply use the thread.
+                actions.append(.reply(isThread: areThreadsEnabled ? false : messageItem.properties.isThreaded))
             } else {
                 actions.append(.reply(isThread: false))
+            }
+            
+            if areThreadsEnabled, !timelineKind.isThread {
+                actions.append(.replyInThread)
             }
         }
         
@@ -58,7 +66,11 @@ struct TimelineItemMenuActionProvider {
             actions.append(.forward(itemID: item.id))
         }
         
-        if item.isEditable {
+        if isMultiSelectEnabled, item.isBulkSelectable {
+            actions.append(.selectMessages)
+        }
+        
+        if item.isEditable, canCurrentUserSendMessage {
             if item.supportsMediaCaption {
                 if item.hasMediaCaption {
                     actions.append(.editCaption)
@@ -79,9 +91,15 @@ struct TimelineItemMenuActionProvider {
         if canCurrentUserPin, let eventID = item.id.eventID {
             actions.append(pinnedEventIDs.contains(eventID) ? .unpin : .pin)
         }
-
+        
         if item.isCopyable {
             actions.append(.copy)
+            
+            if !ProcessInfo.processInfo.isiOSAppOnMac {
+                // As of macOS 26.2, the sheet isn't presented, but it is easy enough
+                // to select some text and right click on Mac anyway so hide this one.
+                actions.append(.translate)
+            }
         } else if item.hasMediaCaption {
             actions.append(.copyCaption)
         }
@@ -99,7 +117,12 @@ struct TimelineItemMenuActionProvider {
         }
         
         if canRedactItem(item) {
-            secondaryActions.append(.redact)
+            let isMedia = if case .media = timelineKind {
+                true
+            } else {
+                false
+            }
+            secondaryActions.append(.redact(isMedia: isMedia))
         }
         
         switch timelineKind {
@@ -107,8 +130,7 @@ struct TimelineItemMenuActionProvider {
             actions = actions.filter(\.canAppearInPinnedEventsTimeline)
             secondaryActions = secondaryActions.filter(\.canAppearInPinnedEventsTimeline)
         case .media:
-            actions.append(.share)
-            actions.append(.save)
+            actions.append(.downloadMedia)
             actions = actions.filter(\.canAppearInMediaDetails)
             secondaryActions = secondaryActions.filter(\.canAppearInMediaDetails)
         case .live, .detached, .thread:
@@ -125,18 +147,18 @@ struct TimelineItemMenuActionProvider {
             secondaryActions = secondaryActions.filter(\.canAppearInRedacted)
         }
         
-        let isReactable = timelineKind == .live || timelineKind == .detached ? item.isReactable : false
-
+        let isReactable = timelineKind == .live || timelineKind == .detached || timelineKind.isThread ? item.isReactable : false
+        
         return .init(isReactable: isReactable, actions: actions, secondaryActions: secondaryActions, emojiProvider: emojiProvider)
     }
     
-    private func makeEncryptedItemActions(_ encryptedItem: EncryptedRoomTimelineItem) -> TimelineItemMenuActions? {
+    private func makeEncryptedItemActions() -> TimelineItemMenuActions? {
         var actions: [TimelineItemMenuAction] = [.copyPermalink]
-
+        
         if isViewSourceEnabled {
             actions.append(.viewSource)
         }
-                
+        
         return .init(isReactable: false,
                      actions: actions,
                      secondaryActions: [],
@@ -144,6 +166,6 @@ struct TimelineItemMenuActionProvider {
     }
     
     private func canRedactItem(_ item: EventBasedTimelineItemProtocol) -> Bool {
-        item.isOutgoing ? canCurrentUserRedactSelf : canCurrentUserRedactOthers && !isDM
+        item.isOutgoing ? canCurrentUserRedactSelf : canCurrentUserRedactOthers
     }
 }

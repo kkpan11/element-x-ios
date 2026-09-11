@@ -1,14 +1,15 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
 import SwiftUI
 
-typealias ResolveVerifiedUserSendFailureScreenViewModelType = StateStoreViewModel<ResolveVerifiedUserSendFailureScreenViewState, ResolveVerifiedUserSendFailureScreenViewAction>
+typealias ResolveVerifiedUserSendFailureScreenViewModelType = StateStoreViewModelV2<ResolveVerifiedUserSendFailureScreenViewState, ResolveVerifiedUserSendFailureScreenViewAction>
 
 class ResolveVerifiedUserSendFailureScreenViewModel: ResolveVerifiedUserSendFailureScreenViewModelType, ResolveVerifiedUserSendFailureScreenViewModelProtocol {
     private let iterator: VerifiedUserSendFailureIterator
@@ -23,7 +24,7 @@ class ResolveVerifiedUserSendFailureScreenViewModel: ResolveVerifiedUserSendFail
     var actionsPublisher: AnyPublisher<ResolveVerifiedUserSendFailureScreenViewModelAction, Never> {
         actionsSubject.eraseToAnyPublisher()
     }
-
+    
     init(failure: TimelineItemSendFailure.VerifiedUser,
          sendHandle: SendHandleProxy,
          roomProxy: JoinedRoomProxyProtocol,
@@ -101,16 +102,15 @@ class ResolveVerifiedUserSendFailureScreenViewModel: ResolveVerifiedUserSendFail
     private static let failureIndicatorIdentifier = "\(ResolveVerifiedUserSendFailureScreenViewModel.self)-Failure"
     
     private func showFailureIndicator() {
-        ServiceLocator.shared.userIndicatorController.submitIndicator(UserIndicator(id: Self.failureIndicatorIdentifier,
-                                                                                    type: .toast,
-                                                                                    title: L10n.errorUnknown,
-                                                                                    iconName: "xmark"))
+        userIndicatorController.submitIndicator(UserIndicator(id: Self.failureIndicatorIdentifier,
+                                                              type: .toast,
+                                                              title: L10n.errorUnknown,
+                                                              icon: \.close))
     }
 }
 
 // MARK: - Iterators
 
-@MainActor
 private protocol VerifiedUserSendFailureIterator {
     func next() -> (userID: String, failure: TimelineItemSendFailure.VerifiedUser)?
 }

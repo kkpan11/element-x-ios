@@ -1,35 +1,39 @@
 //
-// Copyright 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2024-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
-import XCTest
-
 @testable import ElementX
+import MatrixRustSDKMocks
+import Testing
 
 @MainActor
-class HomeScreenRoomTests: XCTestCase {
+struct HomeScreenRoomTests {
     var roomSummary: RoomSummary!
     
-    func setupRoomSummary(isMarkedUnread: Bool,
-                          unreadMessagesCount: UInt,
-                          unreadMentionsCount: UInt,
-                          unreadNotificationsCount: UInt,
-                          notificationMode: RoomNotificationModeProxy,
-                          hasOngoingCall: Bool) {
-        roomSummary = RoomSummary(roomListItem: .init(noPointer: .init()),
+    mutating func setupRoomSummary(isMarkedUnread: Bool,
+                                   unreadMessagesCount: UInt,
+                                   unreadMentionsCount: UInt,
+                                   unreadNotificationsCount: UInt,
+                                   notificationMode: RoomNotificationModeProxy,
+                                   hasOngoingCall: Bool,
+                                   activeCallIntent: CallIntent? = nil) {
+        roomSummary = RoomSummary(room: RoomSDKMock(),
                                   id: "Test room",
                                   joinRequestType: nil,
                                   name: "Test room",
                                   isDirect: false,
+                                  isSpace: false,
                                   avatarURL: nil,
                                   heroes: [],
                                   activeMembersCount: 0,
                                   lastMessage: nil,
                                   lastMessageDate: nil,
+                                  lastMessageState: nil,
                                   unreadMessagesCount: unreadMessagesCount,
                                   unreadMentionsCount: unreadMentionsCount,
                                   unreadNotificationsCount: unreadNotificationsCount,
@@ -37,11 +41,14 @@ class HomeScreenRoomTests: XCTestCase {
                                   canonicalAlias: nil,
                                   alternativeAliases: [],
                                   hasOngoingCall: hasOngoingCall,
+                                  activeCallIntent: activeCallIntent,
                                   isMarkedUnread: isMarkedUnread,
-                                  isFavourite: false)
+                                  isFavourite: false,
+                                  isTombstoned: false)
     }
     
-    func testNoBadge() {
+    @Test
+    mutating func noBadge() {
         setupRoomSummary(isMarkedUnread: false,
                          unreadMessagesCount: 0,
                          unreadMentionsCount: 0,
@@ -49,16 +56,18 @@ class HomeScreenRoomTests: XCTestCase {
                          notificationMode: .allMessages,
                          hasOngoingCall: false)
         
-        let room = HomeScreenRoom(summary: roomSummary, hideUnreadMessagesBadge: false)
+        let room = HomeScreenRoom(summary: roomSummary)
         
-        XCTAssertFalse(room.isHighlighted)
-        XCTAssertFalse(room.badges.isDotShown)
-        XCTAssertFalse(room.badges.isCallShown)
-        XCTAssertFalse(room.badges.isMuteShown)
-        XCTAssertFalse(room.badges.isMentionShown)
+        #expect(!room.isHighlighted)
+        #expect(!room.badges.isDotShown)
+        #expect(room.badges.notificationCount == 0)
+        #expect(room.badges.callBadgeType == .none)
+        #expect(!room.badges.isMuteShown)
+        #expect(!room.badges.isMentionShown)
     }
     
-    func testAllBadgesExceptMute() {
+    @Test
+    mutating func allBadgesExceptMute() {
         setupRoomSummary(isMarkedUnread: true,
                          unreadMessagesCount: 5,
                          unreadMentionsCount: 5,
@@ -66,16 +75,33 @@ class HomeScreenRoomTests: XCTestCase {
                          notificationMode: .allMessages,
                          hasOngoingCall: true)
         
-        let room = HomeScreenRoom(summary: roomSummary, hideUnreadMessagesBadge: false)
+        let room = HomeScreenRoom(summary: roomSummary)
         
-        XCTAssertTrue(room.isHighlighted)
-        XCTAssertTrue(room.badges.isDotShown)
-        XCTAssertTrue(room.badges.isCallShown)
-        XCTAssertFalse(room.badges.isMuteShown)
-        XCTAssertTrue(room.badges.isMentionShown)
+        #expect(room.isHighlighted)
+        #expect(room.badges.isDotShown)
+        #expect(room.badges.notificationCount == 5)
+        #expect(room.badges.callBadgeType == .video)
+        #expect(!room.badges.isMuteShown)
+        #expect(room.badges.isMentionShown)
     }
     
-    func testUnhighlightedDot() {
+    @Test
+    mutating func voiceCallBadge() {
+        setupRoomSummary(isMarkedUnread: true,
+                         unreadMessagesCount: 0,
+                         unreadMentionsCount: 0,
+                         unreadNotificationsCount: 0,
+                         notificationMode: .allMessages,
+                         hasOngoingCall: true,
+                         activeCallIntent: .audio)
+        
+        let room = HomeScreenRoom(summary: roomSummary)
+        
+        #expect(room.badges.callBadgeType == .voice)
+    }
+    
+    @Test
+    mutating func unhighlightedDot() {
         setupRoomSummary(isMarkedUnread: false,
                          unreadMessagesCount: 5,
                          unreadMentionsCount: 0,
@@ -83,16 +109,18 @@ class HomeScreenRoomTests: XCTestCase {
                          notificationMode: .allMessages,
                          hasOngoingCall: false)
         
-        let room = HomeScreenRoom(summary: roomSummary, hideUnreadMessagesBadge: false)
+        let room = HomeScreenRoom(summary: roomSummary)
         
-        XCTAssertFalse(room.isHighlighted)
-        XCTAssertTrue(room.badges.isDotShown)
-        XCTAssertFalse(room.badges.isCallShown)
-        XCTAssertFalse(room.badges.isMuteShown)
-        XCTAssertFalse(room.badges.isMentionShown)
+        #expect(!room.isHighlighted)
+        #expect(room.badges.isDotShown)
+        #expect(room.badges.notificationCount == 0)
+        #expect(room.badges.callBadgeType == .none)
+        #expect(!room.badges.isMuteShown)
+        #expect(!room.badges.isMentionShown)
     }
     
-    func testHighlightedDot() {
+    @Test
+    mutating func highlightedDot() {
         setupRoomSummary(isMarkedUnread: false,
                          unreadMessagesCount: 0,
                          unreadMentionsCount: 0,
@@ -100,16 +128,18 @@ class HomeScreenRoomTests: XCTestCase {
                          notificationMode: .allMessages,
                          hasOngoingCall: false)
         
-        let room = HomeScreenRoom(summary: roomSummary, hideUnreadMessagesBadge: false)
+        let room = HomeScreenRoom(summary: roomSummary)
         
-        XCTAssertTrue(room.isHighlighted)
-        XCTAssertTrue(room.badges.isDotShown)
-        XCTAssertFalse(room.badges.isCallShown)
-        XCTAssertFalse(room.badges.isMuteShown)
-        XCTAssertFalse(room.badges.isMentionShown)
+        #expect(room.isHighlighted)
+        #expect(room.badges.isDotShown)
+        #expect(room.badges.notificationCount == 5)
+        #expect(room.badges.callBadgeType == .none)
+        #expect(!room.badges.isMuteShown)
+        #expect(!room.badges.isMentionShown)
     }
     
-    func testHighlightedMentionAndDot() {
+    @Test
+    mutating func highlightedMentionAndDot() {
         setupRoomSummary(isMarkedUnread: false,
                          unreadMessagesCount: 0,
                          unreadMentionsCount: 5,
@@ -117,16 +147,18 @@ class HomeScreenRoomTests: XCTestCase {
                          notificationMode: .allMessages,
                          hasOngoingCall: false)
         
-        let room = HomeScreenRoom(summary: roomSummary, hideUnreadMessagesBadge: false)
+        let room = HomeScreenRoom(summary: roomSummary)
         
-        XCTAssertTrue(room.isHighlighted)
-        XCTAssertTrue(room.badges.isDotShown)
-        XCTAssertFalse(room.badges.isCallShown)
-        XCTAssertFalse(room.badges.isMuteShown)
-        XCTAssertTrue(room.badges.isMentionShown)
+        #expect(room.isHighlighted)
+        #expect(room.badges.isDotShown)
+        #expect(room.badges.notificationCount == 0)
+        #expect(room.badges.callBadgeType == .none)
+        #expect(!room.badges.isMuteShown)
+        #expect(room.badges.isMentionShown)
     }
     
-    func testUnhighlightedCall() {
+    @Test
+    mutating func unhighlightedCall() {
         setupRoomSummary(isMarkedUnread: false,
                          unreadMessagesCount: 0,
                          unreadMentionsCount: 0,
@@ -134,16 +166,17 @@ class HomeScreenRoomTests: XCTestCase {
                          notificationMode: .allMessages,
                          hasOngoingCall: true)
         
-        let room = HomeScreenRoom(summary: roomSummary, hideUnreadMessagesBadge: false)
+        let room = HomeScreenRoom(summary: roomSummary)
         
-        XCTAssertFalse(room.isHighlighted)
-        XCTAssertFalse(room.badges.isDotShown)
-        XCTAssertTrue(room.badges.isCallShown)
-        XCTAssertFalse(room.badges.isMuteShown)
-        XCTAssertFalse(room.badges.isMentionShown)
+        #expect(!room.isHighlighted)
+        #expect(!room.badges.isDotShown)
+        #expect(room.badges.callBadgeType == .video)
+        #expect(!room.badges.isMuteShown)
+        #expect(!room.badges.isMentionShown)
     }
     
-    func testMentionAndKeywordsUnhighlightedDot() {
+    @Test
+    mutating func mentionAndKeywordsUnhighlightedDot() {
         setupRoomSummary(isMarkedUnread: false,
                          unreadMessagesCount: 10,
                          unreadMentionsCount: 0,
@@ -151,16 +184,17 @@ class HomeScreenRoomTests: XCTestCase {
                          notificationMode: .mentionsAndKeywordsOnly,
                          hasOngoingCall: false)
         
-        let room = HomeScreenRoom(summary: roomSummary, hideUnreadMessagesBadge: false)
+        let room = HomeScreenRoom(summary: roomSummary)
         
-        XCTAssertFalse(room.isHighlighted)
-        XCTAssertTrue(room.badges.isDotShown)
-        XCTAssertFalse(room.badges.isCallShown)
-        XCTAssertFalse(room.badges.isMuteShown)
-        XCTAssertFalse(room.badges.isMentionShown)
+        #expect(!room.isHighlighted)
+        #expect(room.badges.isDotShown)
+        #expect(room.badges.callBadgeType == .none)
+        #expect(!room.badges.isMuteShown)
+        #expect(!room.badges.isMentionShown)
     }
     
-    func testMentionAndKeywordsUnhighlightedDotHidden() {
+    @Test
+    mutating func mentionAndKeywordsUnhighlightedDotHidden() {
         setupRoomSummary(isMarkedUnread: false,
                          unreadMessagesCount: 10,
                          unreadMentionsCount: 0,
@@ -168,18 +202,19 @@ class HomeScreenRoomTests: XCTestCase {
                          notificationMode: .mentionsAndKeywordsOnly,
                          hasOngoingCall: false)
         
-        let room = HomeScreenRoom(summary: roomSummary, hideUnreadMessagesBadge: true)
+        let room = HomeScreenRoom(summary: roomSummary, roomListActivityVisibility: .show)
         
-        XCTAssertFalse(room.isHighlighted)
-        XCTAssertFalse(room.badges.isDotShown)
-        XCTAssertFalse(room.badges.isCallShown)
-        XCTAssertFalse(room.badges.isMuteShown)
-        XCTAssertFalse(room.badges.isMentionShown)
+        #expect(!room.isHighlighted)
+        #expect(!room.badges.isDotShown)
+        #expect(room.badges.callBadgeType == .none)
+        #expect(!room.badges.isMuteShown)
+        #expect(!room.badges.isMentionShown)
     }
     
     // MARK: - Mark unread
     
-    func testMarkedUnreadDot() {
+    @Test
+    mutating func markedUnreadDot() {
         setupRoomSummary(isMarkedUnread: true,
                          unreadMessagesCount: 0,
                          unreadMentionsCount: 0,
@@ -187,16 +222,18 @@ class HomeScreenRoomTests: XCTestCase {
                          notificationMode: .allMessages,
                          hasOngoingCall: false)
         
-        let room = HomeScreenRoom(summary: roomSummary, hideUnreadMessagesBadge: false)
+        let room = HomeScreenRoom(summary: roomSummary)
         
-        XCTAssertTrue(room.isHighlighted)
-        XCTAssertTrue(room.badges.isDotShown)
-        XCTAssertFalse(room.badges.isCallShown)
-        XCTAssertFalse(room.badges.isMuteShown)
-        XCTAssertFalse(room.badges.isMentionShown)
+        #expect(room.isHighlighted)
+        #expect(room.badges.isDotShown)
+        #expect(room.badges.notificationCount == 0)
+        #expect(room.badges.callBadgeType == .none)
+        #expect(!room.badges.isMuteShown)
+        #expect(!room.badges.isMentionShown)
     }
     
-    func testMarkedUnreadDotAndMention() {
+    @Test
+    mutating func markedUnreadDotAndMention() {
         setupRoomSummary(isMarkedUnread: true,
                          unreadMessagesCount: 0,
                          unreadMentionsCount: 5,
@@ -204,16 +241,18 @@ class HomeScreenRoomTests: XCTestCase {
                          notificationMode: .allMessages,
                          hasOngoingCall: false)
         
-        let room = HomeScreenRoom(summary: roomSummary, hideUnreadMessagesBadge: false)
+        let room = HomeScreenRoom(summary: roomSummary)
         
-        XCTAssertTrue(room.isHighlighted)
-        XCTAssertTrue(room.badges.isDotShown)
-        XCTAssertFalse(room.badges.isCallShown)
-        XCTAssertFalse(room.badges.isMuteShown)
-        XCTAssertTrue(room.badges.isMentionShown)
+        #expect(room.isHighlighted)
+        #expect(room.badges.isDotShown)
+        #expect(room.badges.notificationCount == 0)
+        #expect(room.badges.callBadgeType == .none)
+        #expect(!room.badges.isMuteShown)
+        #expect(room.badges.isMentionShown)
     }
     
-    func testMarkedUnreadMuteDotAndCall() {
+    @Test
+    mutating func markedUnreadMuteDotAndCall() {
         setupRoomSummary(isMarkedUnread: true,
                          unreadMessagesCount: 5,
                          unreadMentionsCount: 5,
@@ -221,12 +260,13 @@ class HomeScreenRoomTests: XCTestCase {
                          notificationMode: .mute,
                          hasOngoingCall: true)
         
-        let room = HomeScreenRoom(summary: roomSummary, hideUnreadMessagesBadge: false)
+        let room = HomeScreenRoom(summary: roomSummary)
         
-        XCTAssertTrue(room.isHighlighted)
-        XCTAssertTrue(room.badges.isDotShown)
-        XCTAssertTrue(room.badges.isCallShown)
-        XCTAssertTrue(room.badges.isMuteShown)
-        XCTAssertFalse(room.badges.isMentionShown)
+        #expect(room.isHighlighted)
+        #expect(room.badges.isDotShown)
+        #expect(room.badges.notificationCount == 5)
+        #expect(room.badges.callBadgeType == .video)
+        #expect(room.badges.isMuteShown)
+        #expect(!room.badges.isMentionShown)
     }
 }

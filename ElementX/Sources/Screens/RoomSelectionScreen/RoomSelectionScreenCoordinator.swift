@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,9 +10,8 @@ import Combine
 import SwiftUI
 
 struct RoomSelectionScreenCoordinatorParameters {
-    let clientProxy: ClientProxyProtocol
+    let userSession: UserSessionProtocol
     let roomSummaryProvider: RoomSummaryProviderProtocol
-    let mediaProvider: MediaProviderProtocol
 }
 
 enum RoomSelectionScreenCoordinatorAction {
@@ -29,9 +29,8 @@ final class RoomSelectionScreenCoordinator: CoordinatorProtocol {
     }
     
     init(parameters: RoomSelectionScreenCoordinatorParameters) {
-        viewModel = RoomSelectionScreenViewModel(clientProxy: parameters.clientProxy,
-                                                 roomSummaryProvider: parameters.roomSummaryProvider,
-                                                 mediaProvider: parameters.mediaProvider)
+        viewModel = RoomSelectionScreenViewModel(userSession: parameters.userSession,
+                                                 roomSummaryProvider: parameters.roomSummaryProvider)
     }
     
     func start() {
@@ -49,7 +48,7 @@ final class RoomSelectionScreenCoordinator: CoordinatorProtocol {
     func stop() {
         viewModel.stop()
     }
-        
+    
     func toPresentable() -> AnyView {
         AnyView(RoomSelectionScreen(context: viewModel.context))
     }

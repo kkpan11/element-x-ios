@@ -1,32 +1,32 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
 import SwiftUI
 
-typealias BlockedUsersScreenViewModelType = StateStoreViewModel<BlockedUsersScreenViewState, BlockedUsersScreenViewAction>
+typealias BlockedUsersScreenViewModelType = StateStoreViewModelV2<BlockedUsersScreenViewState, BlockedUsersScreenViewAction>
 
 class BlockedUsersScreenViewModel: BlockedUsersScreenViewModelType, BlockedUsersScreenViewModelProtocol {
     let hideProfiles: Bool
     let clientProxy: ClientProxyProtocol
     let userIndicatorController: UserIndicatorControllerProtocol
-
+    
     init(hideProfiles: Bool,
-         clientProxy: ClientProxyProtocol,
-         mediaProvider: MediaProviderProtocol,
+         userSession: UserSessionProtocol,
          userIndicatorController: UserIndicatorControllerProtocol) {
         self.hideProfiles = hideProfiles
-        self.clientProxy = clientProxy
+        clientProxy = userSession.clientProxy
         self.userIndicatorController = userIndicatorController
         
-        let ignoredUsers = clientProxy.ignoredUsersPublisher.value?.map { UserProfileProxy(userID: $0) }
+        let ignoredUsers = clientProxy.ignoredUsersPublisher.value?.map { UserProfile(userID: $0) }
         
         super.init(initialViewState: BlockedUsersScreenViewState(blockedUsers: ignoredUsers ?? []),
-                   mediaProvider: mediaProvider)
+                   mediaProvider: userSession.mediaProvider)
         
         showLoadingIndicator()
         
@@ -51,6 +51,12 @@ class BlockedUsersScreenViewModel: BlockedUsersScreenViewModelType, BlockedUsers
                                                  self?.unblockUser(user)
                                              },
                                              secondaryButton: .init(title: L10n.actionCancel, role: .cancel, action: nil))
+        case .copyUserID(let user):
+            UIPasteboard.general.string = user.id
+            userIndicatorController.submitIndicator(UserIndicator(id: Self.copiedIndicatorIdentifier,
+                                                                  type: .toast,
+                                                                  title: L10n.commonCopiedToClipboard,
+                                                                  icon: \.check))
         }
     }
     
@@ -64,31 +70,39 @@ class BlockedUsersScreenViewModel: BlockedUsersScreenViewModelType, BlockedUsers
         defer { hideLoadingIndicator() }
         
         if hideProfiles {
-            state.blockedUsers = blockedUsers.map { UserProfileProxy(userID: $0) }
+            state.blockedUsers = blockedUsers.map { UserProfile(userID: $0) }
         } else {
-            state.blockedUsers = await withTaskGroup(of: UserProfileProxy.self) { group in
+            state.blockedUsers = await withTaskGroup(of: UserProfile.self) { group in
                 for userID in blockedUsers {
                     group.addTask {
-                        switch await self.clientProxy.profile(for: userID) {
-                        case .success(let profile): profile
-                        case .failure: UserProfileProxy(userID: userID)
-                        }
+                        await self.profile(for: userID)
                     }
                 }
                 
-                return await group.reduce(into: []) { partialResult, profile in
-                    partialResult.append(profile)
+                var profiles = [UserProfile]()
+                for await profile in group {
+                    profiles.append(profile)
                 }
+                return profiles
             }
         }
     }
     
-    private func unblockUser(_ user: UserProfileProxy) {
+    /// The client proxy isn't Sendable, fetch through this helper so that it
+    /// never leaves the main actor when running calls in parallel.
+    private func profile(for userID: String) async -> UserProfile {
+        switch await clientProxy.profile(for: userID) {
+        case .success(let profile): profile
+        case .failure: UserProfile(userID: userID)
+        }
+    }
+    
+    private func unblockUser(_ user: UserProfile) {
         showLoadingIndicator()
-        state.processingUserID = user.userID
+        state.processingUserID = user.id
         
         Task {
-            if case .failure = await clientProxy.unignoreUser(user.userID) {
+            if case .failure = await clientProxy.unignoreUser(user.id) {
                 state.bindings.alertInfo = .init(id: .error)
             }
             
@@ -100,6 +114,7 @@ class BlockedUsersScreenViewModel: BlockedUsersScreenViewModelType, BlockedUsers
     // MARK: Loading indicator
     
     private static let loadingIndicatorIdentifier = "\(BlockedUsersScreenViewModel.self)-Loading"
+    private static let copiedIndicatorIdentifier = "\(BlockedUsersScreenViewModel.self)-Copied"
     
     private func showLoadingIndicator() {
         userIndicatorController.submitIndicator(UserIndicator(id: Self.loadingIndicatorIdentifier,

@@ -1,9 +1,12 @@
 import ArgumentParser
 import Foundation
+import Logging
+
+let logger = Logger(label: "🚀")
 
 @main
 struct Tools: AsyncParsableCommand {
-    static var configuration = CommandConfiguration(abstract: "A collection of command line tools for ElementX",
+    static let configuration = CommandConfiguration(abstract: "A collection of command line tools for ElementX",
                                                     subcommands: [BuildSDK.self,
                                                                   SetupProject.self,
                                                                   OutdatedPackages.self,
@@ -12,5 +15,7 @@ struct Tools: AsyncParsableCommand {
                                                                   GenerateSDKMocks.self,
                                                                   GenerateSAS.self,
                                                                   AppIconBanner.self,
-                                                                  UnusedStrings.self])
+                                                                  UnusedStrings.self,
+                                                                  BumpCalendarVersion.self,
+                                                                  CI.self])
 }

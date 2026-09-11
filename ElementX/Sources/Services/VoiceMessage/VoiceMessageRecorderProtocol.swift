@@ -1,7 +1,8 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -26,9 +27,9 @@ protocol VoiceMessageRecorderProtocol {
     var previewAudioPlayerState: AudioPlayerState? { get }
     var isRecording: Bool { get }
     var recordingURL: URL? { get }
-
+    
     var actions: AnyPublisher<VoiceMessageRecorderAction, Never> { get }
-
+    
     func startRecording() async
     func stopRecording() async
     func cancelRecording() async
@@ -38,7 +39,8 @@ protocol VoiceMessageRecorderProtocol {
     func seekPlayback(to progress: Double) async
     func deleteRecording() async
     
-    func sendVoiceMessage(inRoom roomProxy: JoinedRoomProxyProtocol, audioConverter: AudioConverterProtocol) async -> Result<Void, VoiceMessageRecorderError>
+    func sendVoiceMessage(timelineController: TimelineControllerProtocol,
+                          audioConverter: AudioConverterProtocol) async -> Result<Void, VoiceMessageRecorderError>
 }
 
 // sourcery: AutoMockable

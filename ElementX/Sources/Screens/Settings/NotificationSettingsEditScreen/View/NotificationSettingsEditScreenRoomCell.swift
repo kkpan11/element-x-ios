@@ -1,7 +1,8 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -15,7 +16,7 @@ struct NotificationSettingsEditScreenRoomCell: View {
     let context: NotificationSettingsEditScreenViewModel.Context
     
     var body: some View {
-        ListRow(label: .action(title: room.name,
+        ListRow(label: .avatar(title: room.name,
                                icon: avatar),
                 details: roomDetailsLabel,
                 kind: .navigationLink {
@@ -27,7 +28,7 @@ struct NotificationSettingsEditScreenRoomCell: View {
                 .accessibilityIdentifier(A11yIdentifiers.notificationSettingsEditScreen.roomName(room.name))
     }
     
-    @ViewBuilder @MainActor
+    @ViewBuilder
     var avatar: some View {
         if dynamicTypeSize < .accessibility3 {
             RoomAvatarImage(avatar: room.avatar,
@@ -38,7 +39,6 @@ struct NotificationSettingsEditScreenRoomCell: View {
         }
     }
     
-    @MainActor
     var roomDetailsLabel: ListRowDetails<EmptyView>? {
         guard let mode = room.notificationMode else { return nil }
         return .label(title: context.viewState.strings.string(for: mode),
@@ -47,28 +47,36 @@ struct NotificationSettingsEditScreenRoomCell: View {
 }
 
 struct NotificationSettingsEditScreenRoomCell_Previews: PreviewProvider, TestablePreview {
+    static let (rooms, viewModel) = makeRooms()
+    
     static var previews: some View {
+        Form {
+            ForEach(rooms) { room in
+                NotificationSettingsEditScreenRoomCell(room: room, context: viewModel.context)
+            }
+        }
+        .compoundList()
+    }
+    
+    private static func makeRooms() -> ([NotificationSettingsEditScreenRoom], NotificationSettingsEditScreenViewModel) {
         let summaryProvider = RoomSummaryProviderMock(.init(state: .loaded(.mockRooms)))
-
-        let userSession = UserSessionMock(.init(clientProxy: ClientProxyMock(.init(userID: "John Doe", roomSummaryProvider: summaryProvider))))
-
+        
         let notificationSettingsProxy = NotificationSettingsProxyMock(with: .init())
         notificationSettingsProxy.getRoomsWithUserDefinedRulesReturnValue = []
-        let viewModel = NotificationSettingsEditScreenViewModel(chatType: .groupChat,
-                                                                userSession: userSession,
-                                                                notificationSettingsProxy: notificationSettingsProxy)
         
-        let rooms: [NotificationSettingsEditScreenRoom] = summaryProvider.roomListPublisher.value.compactMap { summary -> NotificationSettingsEditScreenRoom? in
+        let userSession = UserSessionMock(.init(clientProxy: ClientProxyMock(.init(userID: "John Doe",
+                                                                                   roomSummaryProvider: summaryProvider,
+                                                                                   notificationSettings: notificationSettingsProxy))))
+        let viewModel = NotificationSettingsEditScreenViewModel(chatType: .groupChat,
+                                                                userSession: userSession)
+        
+        let rooms = summaryProvider.roomListPublisher.value.map { summary in
             NotificationSettingsEditScreenRoom(id: UUID().uuidString,
                                                roomId: summary.id,
                                                name: summary.name,
                                                avatar: summary.avatar)
         }
         
-        return VStack(spacing: 0) {
-            ForEach(rooms) { room in
-                NotificationSettingsEditScreenRoomCell(room: room, context: viewModel.context)
-            }
-        }
+        return (rooms, viewModel)
     }
 }

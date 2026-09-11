@@ -1,13 +1,15 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
 import Foundation
 import MatrixRustSDK
+import Synchronization
 
 class SecureBackupController: SecureBackupControllerProtocol {
     private let encryption: Encryption
@@ -17,10 +19,9 @@ class SecureBackupController: SecureBackupControllerProtocol {
     
     // periphery:ignore - retaining purpose
     private var backupStateListenerTaskHandle: TaskHandle?
-    // periphery:ignore - retaining purpose
+    // periphery:ignore - required for instance retention in the rust codebase
     private var recoveryStateListenerTaskHandle: TaskHandle?
     
-    // periphery:ignore - auto cancels when reassigned
     /// Used to dedupe remote backup state requests
     @CancellableTask private var remoteBackupStateTask: Task<Void, Error>?
     
@@ -35,7 +36,7 @@ class SecureBackupController: SecureBackupControllerProtocol {
     init(encryption: Encryption) {
         self.encryption = encryption
         
-        backupStateListenerTaskHandle = encryption.backupStateListener(listener: SDKListener { [weak self] state in
+        backupStateListenerTaskHandle = encryption.backupStateListener(listener: SDKListener.onMainActor { [weak self] state in
             guard let self else { return }
             
             switch state {
@@ -62,7 +63,7 @@ class SecureBackupController: SecureBackupControllerProtocol {
             }
         })
         
-        recoveryStateListenerTaskHandle = encryption.recoveryStateListener(listener: SDKListener { [weak self] state in
+        recoveryStateListenerTaskHandle = encryption.recoveryStateListener(listener: SDKListener.onMainActor { [weak self] state in
             guard let self else { return }
             
             switch state {
@@ -78,8 +79,6 @@ class SecureBackupController: SecureBackupControllerProtocol {
             
             MXLog.info("Recovery state changed to: \(state), setting local state to \(recoveryStateSubject.value)")
         })
-        
-        updateBackupStateFromRemote()
     }
     
     func enable() async -> Result<Void, SecureBackupControllerError> {
@@ -109,19 +108,18 @@ class SecureBackupController: SecureBackupControllerProtocol {
         return .success(())
     }
     
-    func generateRecoveryKey() async -> Result<String, SecureBackupControllerError> {
+    func generateRecoveryKey(withPassphrase passphrase: String?) async -> Result<String, SecureBackupControllerError> {
         do {
-            guard recoveryState.value == .disabled else {
+            if recoveryState.value == .disabled {
+                MXLog.info("Enabling recovery")
+            } else {
                 MXLog.info("Resetting recovery key")
-                
-                let key = try await encryption.resetRecoveryKey()
-                return .success(key)
             }
             
-            MXLog.info("Enabling recovery")
-            
-            var keyUploadErrored = false
-            let recoveryKey = try await encryption.enableRecovery(waitForBackupsToUpload: false, passphrase: nil, progressListener: SDKListener { [weak self] state in
+            let keyUploadErrored = Mutex(false)
+            // Note: `enableRecovery` also handles the reset case (equivalent to `resetRecoveryKey`).
+            // Despite the name, it is the correct call for both initial setup and key rotation.
+            let recoveryKey = try await encryption.enableRecovery(waitForBackupsToUpload: false, passphrase: passphrase, progressListener: SDKListener.onMainActor { [weak self] state in
                 guard let self else { return }
                 
                 switch state {
@@ -131,11 +129,11 @@ class SecureBackupController: SecureBackupControllerProtocol {
                     recoveryStateSubject.send(.enabled)
                 case .roomKeyUploadError:
                     MXLog.error("Failed enabling recovery: room key upload error")
-                    keyUploadErrored = true
+                    keyUploadErrored.withLock { $0 = true }
                 }
             })
             
-            return keyUploadErrored ? .failure(.failedGeneratingRecoveryKey) : .success(recoveryKey)
+            return keyUploadErrored.withLock { $0 } ? .failure(.failedGeneratingRecoveryKey) : .success(recoveryKey)
         } catch {
             MXLog.error("Failed generating recovery key with error: \(error)")
             
@@ -146,18 +144,18 @@ class SecureBackupController: SecureBackupControllerProtocol {
     func confirmRecoveryKey(_ key: String) async -> Result<Void, SecureBackupControllerError> {
         do {
             MXLog.info("Confirming recovery key")
-            try await encryption.recover(recoveryKey: key)
+            try await encryption.recoverAndFixBackup(recoveryKey: key)
             return .success(())
         } catch {
             MXLog.info("Failed confirming recovery key with error: \(error)")
             return .failure(.failedConfirmingRecoveryKey)
         }
     }
-        
+    
     func waitForKeyBackupUpload(uploadStateSubject: CurrentValueSubject<SecureBackupSteadyState, Never>) async -> Result<Void, SecureBackupControllerError> {
         do {
             MXLog.info("Waiting for backup upload steady state")
-            try await encryption.waitForBackupUploadSteadyState(progressListener: SDKListener { state in
+            try await encryption.waitForBackupUploadSteadyState(progressListener: SDKListener.onMainActor { state in
                 let uploadState: SecureBackupSteadyState = switch state {
                 case .waiting: .waiting
                 case .uploading(let backedUpCount, let totalCount): .uploading(uploadedKeyCount: Int(backedUpCount), totalKeyCount: Int(totalCount))
@@ -188,7 +186,9 @@ class SecureBackupController: SecureBackupControllerProtocol {
     // MARK: - Private
     
     private func updateBackupStateFromRemote(retry: Bool = true) {
-        remoteBackupStateTask = Task {
+        remoteBackupStateTask = Task { [weak self] in
+            guard let self else { return }
+            
             do {
                 MXLog.info("Checking if backup exists on the server")
                 let backupExists = try await self.encryption.backupExistsOnServer()

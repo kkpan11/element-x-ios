@@ -1,18 +1,19 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 @testable import ElementX
 @testable import Kingfisher
 import UIKit
 
-class MockImageCache: ImageCache, @unchecked Sendable {
+nonisolated class MockImageCache: ImageCache, @unchecked Sendable {
     var retrievedImagesInMemory = [String: UIImage]()
     var retrievedImages = [String: UIImage]()
     var storedImages = [String: UIImage]()
-
+    
     override func retrieveImageInMemoryCache(forKey key: String, options: KingfisherParsedOptionsInfo) -> KFCrossPlatformImage? {
         retrievedImagesInMemory[key]
     }
@@ -30,6 +31,7 @@ class MockImageCache: ImageCache, @unchecked Sendable {
                         original: Data? = nil,
                         forKey key: String,
                         processorIdentifier identifier: String = "",
+                        forcedExtension: String? = nil,
                         cacheSerializer serializer: CacheSerializer = DefaultCacheSerializer.default,
                         toDisk: Bool = true,
                         callbackQueue: CallbackQueue = .untouch,

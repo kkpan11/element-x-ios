@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,7 +10,7 @@ import Compound
 import SwiftUI
 
 struct RoomRolesAndPermissionsScreen: View {
-    @ObservedObject var context: RoomRolesAndPermissionsScreenViewModel.Context
+    @Bindable var context: RoomRolesAndPermissionsScreenViewModel.Context
     
     var body: some View {
         Form {
@@ -26,13 +27,23 @@ struct RoomRolesAndPermissionsScreen: View {
     
     private var rolesSection: some View {
         Section {
-            ListRow(label: .default(title: L10n.screenRoomRolesAndPermissionsAdmins,
-                                    icon: \.admin),
-                    details: administratorDetails,
-                    kind: .navigationLink {
-                        context.send(viewAction: .editRoles(.administrators))
-                    })
-                    .accessibilityIdentifier(A11yIdentifiers.roomRolesAndPermissionsScreen.administrators)
+            if context.viewState.ownPowerLevel.role == .creator {
+                ListRow(label: .default(title: L10n.screenRoomRolesAndPermissionsAdminsAndOwners,
+                                        icon: \.admin),
+                        details: administratorOrOwnersDetails,
+                        kind: .navigationLink {
+                            context.send(viewAction: .editRoles(.administrators))
+                        })
+                        .accessibilityIdentifier(A11yIdentifiers.roomRolesAndPermissionsScreen.administrators)
+            } else {
+                ListRow(label: .default(title: L10n.screenRoomRolesAndPermissionsAdmins,
+                                        icon: \.admin),
+                        details: administratorDetails,
+                        kind: .navigationLink {
+                            context.send(viewAction: .editRoles(.administrators))
+                        })
+                        .accessibilityIdentifier(A11yIdentifiers.roomRolesAndPermissionsScreen.administrators)
+            }
             
             ListRow(label: .default(title: L10n.screenRoomRolesAndPermissionsModerators,
                                     icon: \.chatProblem),
@@ -42,14 +53,24 @@ struct RoomRolesAndPermissionsScreen: View {
                     })
                     .accessibilityIdentifier(A11yIdentifiers.roomRolesAndPermissionsScreen.moderators)
             
-            ListRow(label: .default(title: L10n.screenRoomRolesAndPermissionsChangeMyRole,
-                                    icon: \.edit),
-                    kind: .button {
-                        context.send(viewAction: .editOwnUserRole)
-                    })
+            if context.viewState.ownPowerLevel.role != .creator {
+                ListRow(label: .default(title: L10n.screenRoomRolesAndPermissionsChangeMyRole,
+                                        icon: \.edit),
+                        kind: .button {
+                            context.send(viewAction: .editOwnUserRole)
+                        })
+            }
         } header: {
             Text(L10n.screenRoomRolesAndPermissionsRolesHeader)
                 .compoundListSectionHeader()
+        }
+    }
+    
+    private var administratorOrOwnersDetails: ListRowDetails<Image> {
+        if let administratorCount = context.viewState.administratorsAndOwnersCount {
+            .title("\(administratorCount)")
+        } else {
+            .isWaiting(true)
         }
     }
     
@@ -71,42 +92,22 @@ struct RoomRolesAndPermissionsScreen: View {
     
     private var permissionsSection: some View {
         Section {
-            ListRow(label: .default(title: L10n.screenRoomRolesAndPermissionsRoomDetails,
-                                    icon: \.info),
+            ListRow(label: .default(title: L10n.screenRoomRolesAndPermissionsPermissionsHeader,
+                                    icon: \.settings),
                     details: .isWaiting(context.viewState.permissions == nil),
                     kind: .navigationLink {
-                        context.send(viewAction: .editPermissions(.roomDetails))
+                        context.send(viewAction: .editPermissions)
                     })
-                    .accessibilityIdentifier(A11yIdentifiers.roomRolesAndPermissionsScreen.roomDetails)
+                    .accessibilityIdentifier(A11yIdentifiers.roomRolesAndPermissionsScreen.permissions)
                     .disabled(context.viewState.permissions == nil)
-            
-            ListRow(label: .default(title: L10n.screenRoomRolesAndPermissionsMessagesAndContent,
-                                    icon: \.chat),
-                    details: .isWaiting(context.viewState.permissions == nil),
-                    kind: .navigationLink {
-                        context.send(viewAction: .editPermissions(.messagesAndContent))
-                    })
-                    .accessibilityIdentifier(A11yIdentifiers.roomRolesAndPermissionsScreen.messagesAndContent)
-                    .disabled(context.viewState.permissions == nil)
-            
-            ListRow(label: .default(title: L10n.screenRoomRolesAndPermissionsMemberModeration,
-                                    icon: \.user),
-                    details: .isWaiting(context.viewState.permissions == nil),
-                    kind: .navigationLink {
-                        context.send(viewAction: .editPermissions(.memberModeration))
-                    })
-                    .accessibilityIdentifier(A11yIdentifiers.roomRolesAndPermissionsScreen.memberModeration)
-                    .disabled(context.viewState.permissions == nil)
-        } header: {
-            Text(L10n.screenRoomRolesAndPermissionsPermissionsHeader)
-                .compoundListSectionHeader()
         }
     }
     
     private var resetSection: some View {
         Section {
-            ListRow(label: .plain(title: L10n.screenRoomRolesAndPermissionsReset,
-                                  role: .destructive),
+            ListRow(label: .default(title: L10n.screenRoomRolesAndPermissionsReset,
+                                    icon: \.delete,
+                                    role: .destructive),
                     kind: .button {
                         context.send(viewAction: .reset)
                     })
@@ -120,10 +121,21 @@ struct RoomRolesAndPermissionsScreen_Previews: PreviewProvider, TestablePreview 
     static let viewModel = RoomRolesAndPermissionsScreenViewModel(initialPermissions: RoomPermissions(powerLevels: .mock),
                                                                   roomProxy: JoinedRoomProxyMock(.init(members: .allMembersAsAdmin)),
                                                                   userIndicatorController: UserIndicatorControllerMock(),
-                                                                  analytics: ServiceLocator.shared.analytics)
+                                                                  analytics: AnalyticsServiceMock(.init()))
+    
+    static let creatorViewModel = RoomRolesAndPermissionsScreenViewModel(initialPermissions: RoomPermissions(powerLevels: .mock),
+                                                                         roomProxy: JoinedRoomProxyMock(.init(members: .allMembersAsCreator)),
+                                                                         userIndicatorController: UserIndicatorControllerMock(),
+                                                                         analytics: AnalyticsServiceMock(.init()))
     static var previews: some View {
-        NavigationStack {
+        ElementNavigationStack {
             RoomRolesAndPermissionsScreen(context: viewModel.context)
         }
+        .previewDisplayName("Admin")
+        
+        ElementNavigationStack {
+            RoomRolesAndPermissionsScreen(context: creatorViewModel.context)
+        }
+        .previewDisplayName("Creator")
     }
 }

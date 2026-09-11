@@ -1,21 +1,44 @@
 //
-// Copyright 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2024-2025 New Vector Ltd.
 //
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 // Please see LICENSE files in the repository root for full details.
 //
 
+import Combine
 import IntentsUI
 import SwiftUI
 
 class ShareExtensionViewController: UIViewController {
-    private let appSettings: CommonSettingsProtocol = AppSettings()
+    private static var targetConfiguration: Target.ConfigurationResult?
+    private let appSettings: CommonSettingsProtocol = {
+        guard let userDefaults = TrackedUserDefaults(suiteName: AppSettings.suiteName) else {
+            fatalError("Catastrophic error retrieving user defaults for \(AppSettings.suiteName)")
+        }
+        return AppSettings(store: userDefaults)
+    }()
+    
+    private var appHooks: AppHooks!
+    
+    private let keychainController = KeychainController(service: .sessions,
+                                                        accessGroup: InfoPlistReader.main.keychainAccessGroupIdentifier)
+    
     private let hostingController = UIHostingController(rootView: ShareExtensionView())
     
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        Target.shareExtension.configure(logLevel: appSettings.logLevel, traceLogPacks: appSettings.traceLogPacks)
+        appHooks = AppHooks()
+        appHooks.setUp()
+        
+        if Self.targetConfiguration == nil {
+            Self.targetConfiguration = Target.shareExtension.configure(logLevel: appSettings.logLevel,
+                                                                       traceLogPacks: appSettings.traceLogPacks,
+                                                                       sentryURL: nil,
+                                                                       rageshakeURL: appSettings.bugReportRageshakeURL,
+                                                                       appHooks: appHooks)
+        }
         
         addChild(hostingController)
         view.addMatchedSubview(hostingController.view)
@@ -24,6 +47,14 @@ class ShareExtensionViewController: UIViewController {
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        
+        if let credentials = keychainController.restorationTokens().first {
+            let homeserverURL = credentials.restorationToken.session.homeserverUrl
+            appHooks.remoteSettingsHook.loadCache(forHomeserver: homeserverURL, applyingTo: appSettings)
+        } else {
+            // We should really show a different state when there isn't a logged in user, but for now this is fine.
+            MXLog.error("Not logged in, launching app to show the authentication flow.")
+        }
         
         Task {
             if let payload = await prepareSharePayload() {
@@ -37,23 +68,32 @@ class ShareExtensionViewController: UIViewController {
     // MARK: - Private
     
     private func prepareSharePayload() async -> ShareExtensionPayload? {
-        guard let extensionItem = extensionContext?.inputItems.first as? NSExtensionItem,
-              let itemProvider = extensionItem.attachments?.first else {
+        guard let extensionContext,
+              let extensionItem = extensionContext.inputItems.first as? NSExtensionItem,
+              let itemProviders = extensionItem.attachments else {
             return nil
         }
         
-        let roomID = (extensionContext?.intent as? INSendMessageIntent)?.conversationIdentifier
+        let roomID = (extensionContext.intent as? INSendMessageIntent)?.conversationIdentifier
         
-        if let fileURL = await itemProvider.storeData(withinAppGroupContainer: true) {
-            return .mediaFile(roomID: roomID, mediaFile: .init(url: fileURL, suggestedName: fileURL.lastPathComponent))
-        } else if let url = await itemProvider.loadTransferable(type: URL.self) {
-            return .text(roomID: roomID, text: url.absoluteString)
-        } else if let string = await itemProvider.loadString() {
-            return .text(roomID: roomID, text: string)
-        } else {
-            MXLog.error("Failed loading NSItemProvider data: \(itemProvider)")
-            return nil
+        var mediaFiles = [ShareExtensionMediaFile]()
+        for itemProvider in itemProviders {
+            if let fileURL = await itemProvider.storeData(withinAppGroupContainer: true) {
+                mediaFiles.append(.init(url: fileURL, suggestedName: fileURL.lastPathComponent))
+            } else if let url = await itemProvider.loadTransferable(type: URL.self) {
+                return .text(roomID: roomID, text: url.absoluteString)
+            } else if let string = await itemProvider.loadString() {
+                return .text(roomID: roomID, text: string)
+            } else {
+                MXLog.error("Failed loading NSItemProvider data: \(itemProvider)")
+            }
         }
+        
+        if !mediaFiles.isEmpty {
+            return .mediaFiles(roomID: roomID, mediaFiles: mediaFiles)
+        }
+        
+        return nil
     }
     
     private func openMainApp(payload: ShareExtensionPayload) async {

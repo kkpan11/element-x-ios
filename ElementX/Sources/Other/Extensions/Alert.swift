@@ -1,7 +1,8 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -12,7 +13,7 @@ protocol AlertProtocol {
 }
 
 extension View {
-    func alert<Item, Actions, Message>(item: Binding<Item?>, @ViewBuilder actions: (Item) -> Actions, @ViewBuilder message: (Item) -> Message) -> some View where Item: AlertProtocol, Actions: View, Message: View {
+    func alert<Item: AlertProtocol, Actions: View, Message: View>(item: Binding<Item?>, @ViewBuilder actions: (Item) -> Actions, @ViewBuilder message: (Item) -> Message) -> some View {
         let binding = Binding<Bool>(get: {
             item.wrappedValue != nil
         }, set: { newValue in
@@ -22,9 +23,9 @@ extension View {
         })
         return alert(item.wrappedValue?.title ?? "", isPresented: binding, presenting: item.wrappedValue, actions: actions, message: message)
     }
-
+    
     // periphery: ignore - not used yet but might be useful
-    func alert<Item, Actions>(item: Binding<Item?>, @ViewBuilder actions: (Item) -> Actions) -> some View where Item: AlertProtocol, Actions: View {
+    func alert<Item: AlertProtocol, Actions: View>(item: Binding<Item?>, @ViewBuilder actions: (Item) -> Actions) -> some View {
         let binding = Binding<Bool>(get: {
             item.wrappedValue != nil
         }, set: { newValue in
@@ -50,7 +51,7 @@ struct AlertInfo<T: Hashable>: Identifiable, AlertProtocol {
         var role: ButtonRole?
         let action: (() -> Void)?
     }
-
+    
     struct AlertTextField: Identifiable {
         let id = UUID()
         let placeholder: String
@@ -58,7 +59,7 @@ struct AlertInfo<T: Hashable>: Identifiable, AlertProtocol {
         let autoCapitalization: TextInputAutocapitalization
         let autoCorrectionDisabled: Bool
     }
-
+    
     /// An identifier that can be used to distinguish one error from another.
     let id: T
     /// The alert's title.
@@ -85,7 +86,7 @@ extension AlertInfo {
         title = L10n.commonError
         message = L10n.errorUnknown
     }
-
+    
     // periphery: ignore - might be useful in the future
     /// Initialises the type with the title from an `Error`'s localised description along with the default Ok button.
     ///
@@ -108,7 +109,7 @@ extension View {
                     }
                 }
             }
-
+            
             if let textFields = item.textFields {
                 VStack(spacing: 24) {
                     ForEach(textFields) { textField in
@@ -118,12 +119,12 @@ extension View {
                     }
                 }
             }
-
+            
             Button(item.primaryButton.title, role: item.primaryButton.role) {
                 item.primaryButton.action?()
             }
             .accessibilityIdentifier(A11yIdentifiers.alertInfo.primaryButton)
-
+            
             if let secondaryButton = item.secondaryButton {
                 Button(secondaryButton.title, role: secondaryButton.role) {
                     secondaryButton.action?()

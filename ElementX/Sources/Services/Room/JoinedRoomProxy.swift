@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -12,10 +13,11 @@ import UIKit
 
 class JoinedRoomProxy: JoinedRoomProxyProtocol {
     private let roomListService: RoomListServiceProtocol
-    private let roomListItem: RoomListItemProtocol
     private let room: RoomProtocol
+    private let appSettings: AppSettings
+    private let analyticsService: AnalyticsServiceProtocol
+    private let eventStringBuilder: RoomEventStringBuilder
     
-    // periphery:ignore - required for instance retention in the rust codebase
     private var roomInfoObservationToken: TaskHandle?
     // periphery:ignore - required for instance retention in the rust codebase
     private var typingNotificationObservationToken: TaskHandle?
@@ -29,19 +31,24 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
     
     private var subscribedForUpdates = false
     
-    // A room identifier is constant and lazy stops it from being fetched
-    // multiple times over FFI
+    /// A room identifier is constant and lazy stops it from being fetched
+    /// multiple times over FFI
     lazy var id: String = room.id()
     
-    var ownUserID: String { room.ownUserId() }
+    var ownUserID: String {
+        room.ownUserId()
+    }
+    
+    /// The predecessor is set on room creation and never changes, so we lazily store it.
+    lazy var predecessorRoom = room.predecessorRoom()
     
     let timeline: TimelineProxyProtocol
     
-    private let infoSubject: CurrentValueSubject<RoomInfoProxy, Never>
-    var infoPublisher: CurrentValuePublisher<RoomInfoProxy, Never> {
+    private let infoSubject: CurrentValueSubject<RoomInfoProxyProtocol, Never>
+    var infoPublisher: CurrentValuePublisher<RoomInfoProxyProtocol, Never> {
         infoSubject.asCurrentValuePublisher()
     }
-
+    
     private let membersSubject = CurrentValueSubject<[RoomMemberProxyProtocol], Never>([])
     var membersPublisher: CurrentValuePublisher<[RoomMemberProxyProtocol], Never> {
         membersSubject.asCurrentValuePublisher()
@@ -63,21 +70,27 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
     }
     
     init(roomListService: RoomListServiceProtocol,
-         roomListItem: RoomListItemProtocol,
-         room: RoomProtocol) async throws {
+         room: RoomProtocol,
+         appSettings: AppSettings,
+         analyticsService: AnalyticsServiceProtocol,
+         eventStringBuilder: RoomEventStringBuilder) async throws {
         self.roomListService = roomListService
-        self.roomListItem = roomListItem
         self.room = room
+        self.appSettings = appSettings
+        self.analyticsService = analyticsService
+        self.eventStringBuilder = eventStringBuilder
         
         infoSubject = try await .init(RoomInfoProxy(roomInfo: room.roomInfo()))
         
-        timeline = try await TimelineProxy(timeline: room.timelineWithConfiguration(configuration: .init(focus: .live,
-                                                                                                         filter: .eventTypeFilter(filter: excludedEventsFilter),
+        let openRoomSpan = analyticsService.signpost.addSpan(.timelineLoad, toTransaction: .openRoom)
+        timeline = try await TimelineProxy(timeline: room.timelineWithConfiguration(configuration: .init(focus: .live(hideThreadedEvents: appSettings.threadsEnabled),
+                                                                                                         filter: .eventFilter(filter: Self.excludedEventsFilter),
                                                                                                          internalIdPrefix: nil,
                                                                                                          dateDividerMode: .daily,
-                                                                                                         trackReadReceipts: true,
+                                                                                                         trackReadReceipts: .messageLikeEvents,
                                                                                                          reportUtds: true)),
                                            kind: .live)
+        openRoomSpan?.finish()
         
         Task {
             await updateMembers()
@@ -99,9 +112,9 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
         }
         
         subscribedForUpdates = true
-
+        
         do {
-            try roomListService.subscribeToRooms(roomIds: [id])
+            try await roomListService.setRoomSubscriptions(roomIds: [id])
         } catch {
             MXLog.error("Failed subscribing to room with error: \(error)")
         }
@@ -126,20 +139,24 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
             return
         }
         
-        roomInfoObservationToken = room.subscribeToRoomInfoUpdates(listener: SDKListener { [weak self] roomInfo in
+        roomInfoObservationToken = room.subscribeToRoomInfoUpdates(listener: SDKListener.onMainActor { [weak self] roomInfo in
             MXLog.info("Received room info update")
-            self?.infoSubject.send(.init(roomInfo: roomInfo))
+            self?.infoSubject.send(RoomInfoProxy(roomInfo: roomInfo))
         })
     }
     
     func timelineFocusedOnEvent(eventID: String, numberOfEvents: UInt16) async -> Result<TimelineProxyProtocol, RoomProxyError> {
         do {
-            let sdkTimeline = try await room.timelineWithConfiguration(configuration: .init(focus: .event(eventId: eventID, numContextEvents: numberOfEvents),
+            let openRoomSpan = analyticsService.signpost.addSpan(.timelineLoad, toTransaction: .notificationToMessage)
+            let sdkTimeline = try await room.timelineWithConfiguration(configuration: .init(focus: .event(eventId: eventID,
+                                                                                                          numContextEvents: numberOfEvents,
+                                                                                                          threadMode: .automatic(hideThreadedEvents: appSettings.threadsEnabled)),
                                                                                             filter: .all,
                                                                                             internalIdPrefix: UUID().uuidString,
                                                                                             dateDividerMode: .daily,
-                                                                                            trackReadReceipts: false,
+                                                                                            trackReadReceipts: .disabled,
                                                                                             reportUtds: true))
+            openRoomSpan?.finish()
             
             return .success(TimelineProxy(timeline: sdkTimeline, kind: .detached))
         } catch let error as FocusEventError {
@@ -162,14 +179,14 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
     
     func threadTimeline(eventID: String) async -> Result<TimelineProxyProtocol, RoomProxyError> {
         do {
-            let sdkTimeline = try await room.timelineWithConfiguration(configuration: .init(focus: .thread(rootEventId: eventID, numEvents: 20),
+            let sdkTimeline = try await room.timelineWithConfiguration(configuration: .init(focus: .thread(rootEventId: eventID),
                                                                                             filter: .all,
                                                                                             internalIdPrefix: UUID().uuidString,
                                                                                             dateDividerMode: .daily,
-                                                                                            trackReadReceipts: true,
+                                                                                            trackReadReceipts: .messageLikeEvents,
                                                                                             reportUtds: true))
             
-            let timeline = TimelineProxy(timeline: sdkTimeline, kind: .thread)
+            let timeline = TimelineProxy(timeline: sdkTimeline, kind: .thread(rootEventID: eventID))
             await timeline.subscribeForUpdates()
             
             return .success(timeline)
@@ -179,15 +196,29 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
         }
     }
     
+    func threadListService() -> RoomThreadListServiceProxyProtocol {
+        RoomThreadListProxy(threadListService: room.threadListService(), eventStringBuilder: eventStringBuilder)
+    }
+    
+    func loadOrFetchEventDetails(for eventID: String) async -> Result<TimelineEvent, RoomProxyError> {
+        do {
+            let event = try await room.loadOrFetchEvent(eventId: eventID)
+            return .success(event)
+        } catch {
+            MXLog.error("Failed fetching the event with id: \(eventID) with error: \(error)")
+            return .failure(.sdkError(error))
+        }
+    }
+    
     func messageFilteredTimeline(focus: TimelineFocus,
                                  allowedMessageTypes: [TimelineAllowedMessageType],
                                  presentation: TimelineKind.MediaPresentation) async -> Result<any TimelineProxyProtocol, RoomProxyError> {
         do {
             let rustFocus: MatrixRustSDK.TimelineFocus = switch focus {
-            case .live: .live
-            case .eventID(let eventID): .event(eventId: eventID, numContextEvents: 100)
-            case .thread(let eventID): .thread(rootEventId: eventID, numEvents: 20)
-            case .pinned: .pinnedEvents(maxEventsToLoad: 100, maxConcurrentRequests: 10)
+            case .live: .live(hideThreadedEvents: false)
+            case .eventID(let eventID): .event(eventId: eventID, numContextEvents: 100, threadMode: .automatic(hideThreadedEvents: false))
+            case .thread(let eventID): .thread(rootEventId: eventID)
+            case .pinned: .pinnedEvents
             }
             
             let rustMessageTypes: [MatrixRustSDK.RoomMessageEventMessageType] = allowedMessageTypes.map {
@@ -196,6 +227,7 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
                 case .file: .file
                 case .image: .image
                 case .video: .video
+                case .gallery: .gallery
                 }
             }
             
@@ -203,7 +235,7 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
                                                                                             filter: .onlyMessage(types: rustMessageTypes),
                                                                                             internalIdPrefix: nil,
                                                                                             dateDividerMode: .monthly,
-                                                                                            trackReadReceipts: false,
+                                                                                            trackReadReceipts: .disabled,
                                                                                             reportUtds: true))
             
             let timeline = TimelineProxy(timeline: sdkTimeline, kind: .media(presentation))
@@ -230,11 +262,11 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
                 }
                 
                 do {
-                    let sdkTimeline = try await room.timelineWithConfiguration(configuration: .init(focus: .pinnedEvents(maxEventsToLoad: 100, maxConcurrentRequests: 10),
+                    let sdkTimeline = try await room.timelineWithConfiguration(configuration: .init(focus: .pinnedEvents,
                                                                                                     filter: .all,
                                                                                                     internalIdPrefix: nil,
                                                                                                     dateDividerMode: .daily,
-                                                                                                    trackReadReceipts: false,
+                                                                                                    trackReadReceipts: .disabled,
                                                                                                     reportUtds: true))
                     
                     let timeline = TimelineProxy(timeline: sdkTimeline, kind: .pinned)
@@ -263,19 +295,9 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
         }
     }
     
-    func redact(_ eventID: String) async -> Result<Void, RoomProxyError> {
-        do {
-            try await room.redact(eventId: eventID, reason: nil)
-            return .success(())
-        } catch {
-            MXLog.error("Failed redacting eventID: \(eventID) with error: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
     func reportContent(_ eventID: String, reason: String?) async -> Result<Void, RoomProxyError> {
         do {
-            try await room.reportContent(eventId: eventID, score: nil, reason: reason)
+            try await room.reportContent(eventId: eventID, reason: reason)
             return .success(())
         } catch {
             MXLog.error("Failed reporting eventID: \(eventID) with error: \(error)")
@@ -283,7 +305,7 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
         }
     }
     
-    func reportRoom(reason: String?) async -> Result<Void, RoomProxyError> {
+    func reportRoom(reason: String) async -> Result<Void, RoomProxyError> {
         do {
             try await room.reportRoom(reason: reason)
             return .success(())
@@ -302,7 +324,7 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
                 membersSubject.value = members.map(RoomMemberProxy.init)
             }
         } catch {
-            MXLog.error("[RoomProxy] Failed updating members using no sync API: \(error)")
+            MXLog.error("Failed updating members using no sync API: \(error)")
         }
         
         do {
@@ -312,12 +334,12 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
                 membersSubject.value = members.map(RoomMemberProxy.init)
             }
         } catch {
-            MXLog.error("[RoomProxy] Failed updating members using sync API: \(error)")
+            MXLog.error("Failed updating members using sync API: \(error)")
         }
     }
-
+    
     func getMember(userID: String) async -> Result<RoomMemberProxyProtocol, RoomProxyError> {
-        if let member = membersPublisher.value.filter({ $0.userID == userID }).first {
+        if let member = membersPublisher.value.first(where: { $0.userID == userID }) {
             return .success(member)
         }
         
@@ -358,7 +380,7 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
             return .failure(.sdkError(error))
         }
     }
-
+    
     func setTopic(_ topic: String) async -> Result<Void, RoomProxyError> {
         do {
             return try await .success(room.setTopic(topic: topic))
@@ -382,7 +404,7 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
             MXLog.error("Failed uploading avatar, invalid media: \(media)")
             return .failure(.invalidMedia)
         }
-
+        
         do {
             let data = try Data(contentsOf: imageURL)
             return try await .success(room.uploadAvatar(mimeType: mimeType, data: data, mediaInfo: nil))
@@ -391,24 +413,16 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
             return .failure(.sdkError(error))
         }
     }
-        
-    func markAsRead(receiptType: ReceiptType) async -> Result<Void, RoomProxyError> {
-        do {
-            try await room.markAsRead(receiptType: receiptType)
-            return .success(())
-        } catch {
-            MXLog.error("Failed marking room \(id) as read with error: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
     
-    func edit(eventID: String, newContent: RoomMessageEventContentWithoutRelation) async -> Result<Void, RoomProxyError> {
-        do {
-            try await room.edit(eventId: eventID, newContent: newContent)
-            return .success(())
-        } catch {
-            MXLog.error("Failed editing event id \(eventID), in room \(id) with error: \(error)")
-            return .failure(.sdkError(error))
+    func markAsRead(receiptType: ReceiptType) async -> Result<Void, RoomProxyError> {
+        // Defer to the timeline here as room.markAsRead will build a fresh timeline.
+        switch await timeline.markAsRead(receiptType: receiptType) {
+        case .success:
+            .success(())
+        case .failure(.sdkError(let error)):
+            .failure(.sdkError(error))
+        case .failure(let error):
+            .failure(.timelineError(error))
         }
     }
     
@@ -446,7 +460,7 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
     
     func updateJoinRule(_ rule: JoinRule) async -> Result<Void, RoomProxyError> {
         do {
-            try await room.updateJoinRules(newRule: rule)
+            try await room.updateJoinRules(newRule: rule.rustValue)
             return .success(())
         } catch {
             MXLog.error("Failed updating join rule with error: \(error)")
@@ -541,15 +555,6 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
     
     // MARK: - Power Levels
     
-    func powerLevels() async -> Result<RoomPowerLevels, RoomProxyError> {
-        do {
-            return try await .success(room.getPowerLevels())
-        } catch {
-            MXLog.error("Failed building the current power level settings: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
     func applyPowerLevelChanges(_ changes: RoomPowerLevelChanges) async -> Result<Void, RoomProxyError> {
         do {
             return try await .success(room.applyPowerLevelChanges(changes: changes))
@@ -559,20 +564,12 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
         }
     }
     
-    func resetPowerLevels() async -> Result<RoomPowerLevels, RoomProxyError> {
+    func resetPowerLevels() async -> Result<Void, RoomProxyError> {
         do {
-            return try await .success(room.resetPowerLevels())
+            _ = try await room.resetPowerLevels()
+            return .success(())
         } catch {
             MXLog.error("Failed resetting the power levels: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
-    func suggestedRole(for userID: String) async -> Result<RoomMemberRole, RoomProxyError> {
-        do {
-            return try await .success(room.suggestedRoleForUser(userId: userID))
-        } catch {
-            MXLog.error("Failed getting a user's role: \(error)")
             return .failure(.sdkError(error))
         }
     }
@@ -583,87 +580,6 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
             return try await .success(room.updatePowerLevelsForUsers(updates: updates))
         } catch {
             MXLog.error("Failed updating user power levels changes: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
-    func canUser(userID: String, sendMessage messageType: MessageLikeEventType) async -> Result<Bool, RoomProxyError> {
-        do {
-            return try await .success(room.canUserSendMessage(userId: userID, message: messageType))
-        } catch {
-            MXLog.error("Failed checking if the user can send message with error: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
-    func canUser(userID: String, sendStateEvent event: StateEventType) async -> Result<Bool, RoomProxyError> {
-        do {
-            return try await .success(room.canUserSendState(userId: userID, stateEvent: event))
-        } catch {
-            MXLog.error("Failed checking if the user can send \(event) with error: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
-    func canUserInvite(userID: String) async -> Result<Bool, RoomProxyError> {
-        do {
-            return try await .success(room.canUserInvite(userId: userID))
-        } catch {
-            MXLog.error("Failed checking if the user can invite with error: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
-    func canUserRedactOther(userID: String) async -> Result<Bool, RoomProxyError> {
-        do {
-            return try await .success(room.canUserRedactOther(userId: userID))
-        } catch {
-            MXLog.error("Failed checking if the user can redact others with error: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
-    func canUserRedactOwn(userID: String) async -> Result<Bool, RoomProxyError> {
-        do {
-            return try await .success(room.canUserRedactOwn(userId: userID))
-        } catch {
-            MXLog.error("Failed checking if the user can redact self with error: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
-    func canUserKick(userID: String) async -> Result<Bool, RoomProxyError> {
-        do {
-            return try await .success(room.canUserKick(userId: userID))
-        } catch {
-            MXLog.error("Failed checking if the user can kick with error: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
-    func canUserBan(userID: String) async -> Result<Bool, RoomProxyError> {
-        do {
-            return try await .success(room.canUserBan(userId: userID))
-        } catch {
-            MXLog.error("Failed checking if the user can ban with error: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
-    func canUserTriggerRoomNotification(userID: String) async -> Result<Bool, RoomProxyError> {
-        do {
-            return try await .success(room.canUserTriggerRoomNotification(userId: userID))
-        } catch {
-            MXLog.error("Failed checking if the user can trigger room notification with error: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
-    func canUserPinOrUnpin(userID: String) async -> Result<Bool, RoomProxyError> {
-        do {
-            return try await .success(room.canUserPinUnpin(userId: userID))
-        } catch {
-            MXLog.error("Failed checking if the user can pin or unnpin: \(error)")
             return .failure(.sdkError(error))
         }
     }
@@ -702,25 +618,27 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
     
     // MARK: - Element Call
     
-    func canUserJoinCall(userID: String) async -> Result<Bool, RoomProxyError> {
-        do {
-            return try await .success(room.canUserSendState(userId: userID, stateEvent: .callMember))
-        } catch {
-            MXLog.error("Failed checking if the user can trigger room notification with error: \(error)")
-            return .failure(.sdkError(error))
-        }
-    }
-    
     func elementCallWidgetDriver(deviceID: String) -> ElementCallWidgetDriverProtocol {
         ElementCallWidgetDriver(room: room, deviceID: deviceID)
     }
     
-    func sendCallNotificationIfNeeded() async -> Result<Void, RoomProxyError> {
+    func declineCall(notificationID: String) async -> Result<Void, RoomProxyError> {
         do {
-            try await room.sendCallNotificationIfNeeded()
+            try await room.declineCall(rtcNotificationEventId: notificationID)
             return .success(())
         } catch {
-            MXLog.error("Failed room call notification with error: \(error)")
+            MXLog.error("Failed to decline rtc notification \(notificationID) with error: \(error)")
+            return .failure(.sdkError(error))
+        }
+    }
+    
+    /// Subscribe to call decline events from that rtc notification event.
+    func subscribeToCallDeclineEvents(rtcNotificationEventID: String, listener: CallDeclineListener) -> Result<TaskHandle, RoomProxyError> {
+        do {
+            let handle = try room.subscribeToCallDeclineEvents(rtcNotificationEventId: rtcNotificationEventID, listener: listener)
+            return .success(handle)
+        } catch {
+            MXLog.error("Failed observing rtc decline with error: \(error)")
             return .failure(.sdkError(error))
         }
     }
@@ -761,9 +679,9 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
     
     // MARK: - Drafts
     
-    func saveDraft(_ draft: ComposerDraft) async -> Result<Void, RoomProxyError> {
+    func saveDraft(_ draft: ComposerDraft, threadRootEventID: String?) async -> Result<Void, RoomProxyError> {
         do {
-            try await room.saveComposerDraft(draft: draft)
+            try await room.saveComposerDraft(draft: draft, threadRoot: threadRootEventID)
             return .success(())
         } catch {
             MXLog.error("Failed saving draft with error: \(error)")
@@ -771,35 +689,74 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
         }
     }
     
-    func loadDraft() async -> Result<ComposerDraft?, RoomProxyError> {
+    func loadDraft(threadRootEventID: String?) async -> Result<ComposerDraft?, RoomProxyError> {
         do {
-            return try await .success(room.loadComposerDraft())
+            return try await .success(room.loadComposerDraft(threadRoot: threadRootEventID))
         } catch {
             MXLog.error("Failed restoring draft with error: \(error)")
             return .failure(.sdkError(error))
         }
     }
     
-    func clearDraft() async -> Result<Void, RoomProxyError> {
+    func clearDraft(threadRootEventID: String?) async -> Result<Void, RoomProxyError> {
         do {
-            try await room.clearComposerDraft()
+            try await room.clearComposerDraft(threadRoot: threadRootEventID)
             return .success(())
         } catch {
             MXLog.error("Failed clearing draft with error: \(error)")
             return .failure(.sdkError(error))
         }
     }
-
+    
+    // MARK: - Live Location
+    
+    func makeLiveLocationService() async -> RoomLiveLocationServiceProtocol {
+        await RoomLiveLocationService(liveLocationsObserver: room.liveLocationsObserver())
+    }
+    
+    func startLiveLocationShare(duration: Duration) async -> Result<String, RoomProxyError> {
+        do {
+            let eventID = try await room.startLiveLocationShare(durationMillis: UInt64(duration.seconds * 1000))
+            return .success(eventID)
+        } catch {
+            MXLog.error("Failed starting live location share with error: \(error)")
+            return .failure(.sdkError(error))
+        }
+    }
+    
+    func sendLiveLocation(geoURI: GeoURI) async -> Result<Void, RoomProxyError> {
+        do {
+            try await room.sendLiveLocation(geoUri: geoURI.string)
+            return .success(())
+        } catch LiveLocationError.NotLive {
+            MXLog.error("Failed sending live location, session is not active")
+            return .failure(.liveLocationSessionIsNotActive)
+        } catch {
+            MXLog.error("Failed sending live location with error: \(error)")
+            return .failure(.sdkError(error))
+        }
+    }
+    
+    func stopLiveLocationShare() async -> Result<Void, RoomProxyError> {
+        do {
+            try await room.stopLiveLocationShare()
+            return .success(())
+        } catch {
+            MXLog.error("Failed stopping live location share with error: \(error)")
+            return .failure(.sdkError(error))
+        }
+    }
+    
     // MARK: - Private
     
     private func subscribeToTypingNotifications() {
-        typingNotificationObservationToken = room.subscribeToTypingNotifications(listener: RoomTypingNotificationUpdateListener { [weak self] typingUserIDs in
+        typingNotificationObservationToken = room.subscribeToTypingNotifications(listener: SDKListener.onMainActor { [weak self] typingUserIDs in
             guard let self else { return }
             
             MXLog.info("Received typing notification update, typingUsers: \(typingUserIDs)")
             
             let typingMembers = typingUserIDs.compactMap { userID in
-                if let member = self.membersPublisher.value.filter({ $0.userID == userID }).first {
+                if let member = self.membersPublisher.value.first(where: { $0.userID == userID }) {
                     return member.displayName ?? member.userID
                 } else {
                     return userID
@@ -812,7 +769,7 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
     
     private func subscribeToIdentityStatusChanges() async {
         do {
-            identityStatusChangesObservationToken = try await room.subscribeToIdentityStatusChanges(listener: RoomIdentityStatusChangeListener { [weak self] changes in
+            identityStatusChangesObservationToken = try await room.subscribeToIdentityStatusChanges(listener: SDKListener.onMainActor { [weak self] changes in
                 guard let self else { return }
                 
                 MXLog.info("Received identity status changes: \(changes)")
@@ -826,7 +783,7 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
     
     private func subscribeToKnockRequests() async {
         do {
-            knockRequestsChangesObservationToken = try await room.subscribeToKnockRequests(listener: RoomKnockRequestsListener { [weak self] requests in
+            knockRequestsChangesObservationToken = try await room.subscribeToKnockRequests(listener: SDKListener.onMainActor { [weak self] requests in
                 guard let self else { return }
                 
                 MXLog.info("Received requests to join update, requests id: \(requests.map(\.eventId))")
@@ -837,57 +794,20 @@ class JoinedRoomProxy: JoinedRoomProxyProtocol {
         }
     }
     
-    private let excludedEventsFilter: TimelineEventTypeFilter = {
-        var stateEventFilters: [StateEventType] = [.roomAliases,
-                                                   .roomCanonicalAlias,
-                                                   .roomGuestAccess,
-                                                   .roomHistoryVisibility,
-                                                   .roomJoinRules,
-                                                   .roomPinnedEvents,
-                                                   .roomPowerLevels,
-                                                   .roomServerAcl,
-                                                   .roomTombstone,
-                                                   .spaceChild,
-                                                   .spaceParent,
-                                                   .policyRuleRoom,
-                                                   .policyRuleServer,
-                                                   .policyRuleUser]
-        return .exclude(eventTypes: stateEventFilters.map { FilterTimelineEventType.state(eventType: $0) })
+    private static let excludedEventsFilter: TimelineEventFilter = {
+        var stateEventFilters: [TimelineEventType] = [.roomCanonicalAlias,
+                                                      .roomGuestAccess,
+                                                      .roomHistoryVisibility,
+                                                      .roomJoinRules,
+                                                      .roomPinnedEvents,
+                                                      .roomPowerLevels,
+                                                      .roomServerAcl,
+                                                      .roomTombstone,
+                                                      .spaceChild,
+                                                      .spaceParent,
+                                                      .policyRuleRoom,
+                                                      .policyRuleServer,
+                                                      .policyRuleUser]
+        return .exclude(stateEventFilters.map { TimelineEventCondition.eventType($0) })
     }()
-}
-
-private final class RoomTypingNotificationUpdateListener: TypingNotificationsListener {
-    private let onUpdateClosure: ([String]) -> Void
-    
-    init(_ onUpdateClosure: @escaping ([String]) -> Void) {
-        self.onUpdateClosure = onUpdateClosure
-    }
-    
-    func call(typingUserIds: [String]) {
-        onUpdateClosure(typingUserIds)
-    }
-}
-
-private final class RoomIdentityStatusChangeListener: IdentityStatusChangeListener {
-    private let onUpdateClosure: ([IdentityStatusChange]) -> Void
-    
-    init(_ onUpdateClosure: @escaping ([IdentityStatusChange]) -> Void) {
-        self.onUpdateClosure = onUpdateClosure
-    }
-    
-    func call(identityStatusChange: [IdentityStatusChange]) {
-        onUpdateClosure(identityStatusChange)
-    }
-}
-
-private final class RoomKnockRequestsListener: KnockRequestsListener {
-    private let onUpdateClosure: ([KnockRequest]) -> Void
-    
-    init(_ onUpdateClosure: @escaping ([KnockRequest]) -> Void) {
-        self.onUpdateClosure = onUpdateClosure
-    }
-    
-    func call(joinRequests: [KnockRequest]) {
-        onUpdateClosure(joinRequests)
-    }
 }

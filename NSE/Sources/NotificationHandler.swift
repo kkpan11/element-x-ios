@@ -1,15 +1,17 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import CallKit
 import MatrixRustSDK
+import Synchronization
 import UserNotifications
 
-class NotificationHandler {
+nonisolated class NotificationHandler {
     private let userSession: NSEUserSession
     private let settings: CommonSettingsProtocol
     private let contentHandler: (UNNotificationContent) -> Void
@@ -18,8 +20,8 @@ class NotificationHandler {
     
     private let notificationContentBuilder: NotificationContentBuilder
     
-    // periphery:ignore - required for instance retention in the rust codebase
-    private var roomInfoObservationToken: TaskHandle?
+    /// Whether this handler has already counted its notification towards the app icon badge.
+    private var hasCountedTowardsBadge = false
     
     init(userSession: NSEUserSession,
          settings: CommonSettingsProtocol,
@@ -33,17 +35,21 @@ class NotificationHandler {
         self.tag = tag
         
         let eventStringBuilder = RoomMessageEventStringBuilder(attributedStringBuilder: AttributedStringBuilder(mentionBuilder: PlainMentionBuilder()),
-                                                               destination: .notification)
+                                                               style: .plain)
         
         notificationContentBuilder = NotificationContentBuilder(messageEventStringBuilder: eventStringBuilder,
-                                                                settings: settings)
+                                                                notificationSoundName: settings.notificationSoundName,
+                                                                userSession: userSession)
     }
     
     func processEvent(_ eventID: String, roomID: String) async {
         MXLog.info("\(tag) Processing event: \(eventID) in room: \(roomID)")
         
-        // Copy over the unread information to the notification badge
-        notificationContent.badge = notificationContent.unreadCount as NSNumber?
+        if !settings.roomListNotificationCountEnabled {
+            // Copy over the unread information provided by the push payload to the notification badge.
+            notificationContent.badge = notificationContent.unreadCount as NSNumber?
+            MXLog.info("\(tag) New badge value: \(notificationContent.badge?.stringValue ?? "nil")")
+        }
         
         guard let notificationItemProxy = await userSession.notificationItemProxy(roomID: roomID, eventID: eventID) else {
             MXLog.error("\(tag) Failed retrieving notification item")
@@ -55,6 +61,11 @@ class NotificationHandler {
         case .processedShouldDiscard, .unsupportedShouldDiscard:
             discardNotification()
         case .shouldDisplay:
+            if settings.hideQuietNotificationAlerts, !notificationItemProxy.isNoisy {
+                discardNotification()
+                return
+            }
+            
             await notificationContentBuilder.process(notificationContent: &notificationContent,
                                                      notificationItem: notificationItemProxy,
                                                      mediaProvider: userSession.mediaProvider)
@@ -73,15 +84,38 @@ class NotificationHandler {
     // MARK: - Private
     
     private func deliverNotification() {
-        MXLog.info("\(tag) Delivering notification")
+        if settings.roomListNotificationCountEnabled {
+            notificationContent.badge = NSNumber(value: incrementBadgeCount())
+            MXLog.info("\(tag) Delivering notification, new badge value: \(settings.lastKnownBadgeCount)")
+        } else {
+            MXLog.info("\(tag) Delivering notification")
+        }
         contentHandler(notificationContent)
     }
-
+    
+    private func incrementBadgeCount() -> Int {
+        // `handleTimeExpiration` can deliver a notification this handler already delivered.
+        guard !hasCountedTowardsBadge else {
+            return settings.lastKnownBadgeCount
+        }
+        
+        hasCountedTowardsBadge = true
+        settings.lastKnownBadgeCount += 1
+        
+        return settings.lastKnownBadgeCount
+    }
+    
     private func discardNotification() {
         MXLog.info("\(tag) Discarding notification")
         
         let content = UNMutableNotificationContent()
-        content.badge = notificationContent.unreadCount as NSNumber?
+        if settings.roomListNotificationCountEnabled {
+            // Nothing new is shown to the user, so leave the badge where the app last put it.
+            content.badge = NSNumber(value: settings.lastKnownBadgeCount)
+        } else {
+            content.badge = notificationContent.unreadCount as NSNumber?
+        }
+        MXLog.info("\(tag) New badge value: \(content.badge?.stringValue ?? "nil")")
         
         contentHandler(content)
     }
@@ -91,16 +125,16 @@ class NotificationHandler {
             return .shouldDisplay
         }
         
-        switch try? event.eventType() {
-        case .messageLike(let content):
-            switch content {
+        switch try? event.content() {
+        case .messageLike(let messageContent):
+            switch messageContent {
             case .poll,
                  .roomEncrypted,
                  .sticker:
                 return .shouldDisplay
             case .roomMessage(let messageType, _):
                 switch messageType {
-                case .emote, .image, .audio, .video, .file, .notice, .text, .location:
+                case .emote, .image, .audio, .video, .file, .notice, .text, .location, .gallery:
                     return .shouldDisplay
                 case .other:
                     return .unsupportedShouldDiscard
@@ -115,14 +149,20 @@ class NotificationHandler {
                 
                 if let targetNotification = deliveredNotifications.first(where: { $0.request.content.eventID == redactedEventID }) {
                     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [targetNotification.request.identifier])
+                    if settings.roomListNotificationCountEnabled {
+                        settings.lastKnownBadgeCount = max(0, settings.lastKnownBadgeCount - 1)
+                    }
                 }
                 
                 return .processedShouldDiscard
-            case .callNotify(let notifyType):
-                return await handleCallNotification(notifyType: notifyType,
+            case .rtcNotification(let notificationType, let expirationTimestamp, let callIntent):
+                return await handleCallNotification(notificationType: notificationType,
+                                                    rtcNotifyEventID: event.eventId(),
                                                     timestamp: event.timestamp(),
+                                                    expirationTimestamp: expirationTimestamp,
                                                     roomID: itemProxy.roomID,
-                                                    roomDisplayName: itemProxy.roomDisplayName)
+                                                    roomDisplayName: itemProxy.roomDisplayName,
+                                                    callIntent: callIntent)
             case .callAnswer,
                  .callInvite,
                  .callHangup,
@@ -134,11 +174,17 @@ class NotificationHandler {
                  .keyVerificationKey,
                  .keyVerificationMac,
                  .keyVerificationDone,
-                 .reactionContent:
+                 .reactionContent,
+                 .beacon:
                 return .unsupportedShouldDiscard
             }
-        case .state:
-            return .unsupportedShouldDiscard
+        case .state(let stateContent):
+            switch stateContent {
+            case .beaconInfo:
+                return .shouldDisplay
+            default:
+                return .unsupportedShouldDiscard
+            }
         case .none:
             return .unsupportedShouldDiscard
         }
@@ -146,10 +192,12 @@ class NotificationHandler {
     
     /// Handle incoming call notifications.
     /// - Returns: A boolean indicating whether the notification was handled and should now be discarded.
-    private func handleCallNotification(notifyType: NotifyType,
+    private func handleCallNotification(notificationType: RtcNotificationType,
+                                        rtcNotifyEventID: String,
                                         timestamp: Timestamp,
+                                        expirationTimestamp: Timestamp,
                                         roomID: String,
-                                        roomDisplayName: String) async -> NotificationProcessingResult {
+                                        roomDisplayName: String, callIntent: RtcCallIntent?) async -> NotificationProcessingResult {
         // Handle incoming VoIP calls, show the native OS call screen
         // https://developer.apple.com/documentation/callkit/sending-end-to-end-encrypted-voip-calls
         //
@@ -162,7 +210,7 @@ class NotificationHandler {
         // - the main app picks this up in `PKPushRegistry.didReceiveIncomingPushWith` and
         // `CXProvider.reportNewIncomingCall` to show the system UI and handle actions on it.
         // N.B. this flow works properly only when background processing capabilities are enabled
-        guard notifyType == .ring else {
+        guard notificationType == .ring else {
             MXLog.info("Non-ringing call notification, handling as push notification")
             return .shouldDisplay
         }
@@ -170,16 +218,27 @@ class NotificationHandler {
         // Check to see if a call is still ongoing
         if let room = userSession.roomForIdentifier(roomID) { // Try to get call details from the room info
             if !room.hasActiveRoomCall() { // If I don't have an active call wait a bit and make sure
+                // Local `Mutex` holder for the SDK subscription token — keeps it alive across the
+                // await without needing `[weak self]`, which would force this class to be `Sendable`.
+                let observationToken = Mutex<TaskHandle?>(nil)
                 let expiringTask = ExpiringTaskRunner {
-                    await withCheckedContinuation { [weak self] continuation in
-                        self?.roomInfoObservationToken = room.subscribeToRoomInfoUpdates(listener: SDKListener { _ in
-                            MXLog.info("Received room info update")
-                            continuation.resume()
-                        })
+                    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                        observationToken.withLock { state in
+                            state = room.subscribeToRoomInfoUpdates(listener: SDKListener { info in
+                                if info.hasRoomCall {
+                                    MXLog.info("Received room info update and the room has an active call now.")
+                                    continuation.resume()
+                                } else {
+                                    MXLog.info("Received a room info update but the room still doesn't have an ongoing call.")
+                                }
+                            })
+                        }
                     }
                 }
                 
-                try? await expiringTask.run(timeout: .seconds(5)) // Wait 5 seconds or just use whatever is available
+                try? await expiringTask.run(timeout: Duration.seconds(5)) // Wait 5 seconds or just use whatever is available
+                // Release the SDK subscription explicitly once we no longer need updates.
+                observationToken.withLock { $0 = nil }
                 
                 guard room.hasActiveRoomCall() else {
                     MXLog.info("The room no longer has an ongoing call, handling as push notification")
@@ -195,8 +254,12 @@ class NotificationHandler {
             }
         }
         
+        let expirationDate = Date(timeIntervalSince1970: TimeInterval(expirationTimestamp / 1000))
         let payload = [ElementCallServiceNotificationKey.roomID.rawValue: roomID,
-                       ElementCallServiceNotificationKey.roomDisplayName.rawValue: roomDisplayName]
+                       ElementCallServiceNotificationKey.roomDisplayName.rawValue: roomDisplayName,
+                       ElementCallServiceNotificationKey.expirationDate.rawValue: expirationDate,
+                       ElementCallServiceNotificationKey.rtcNotifyEventID.rawValue: rtcNotifyEventID,
+                       ElementCallServiceNotificationKey.isVoiceCall.rawValue: callIntent == RtcCallIntent.audio] as [String: Any]
         
         do {
             try await CXProvider.reportNewIncomingVoIPPushPayload(payload)

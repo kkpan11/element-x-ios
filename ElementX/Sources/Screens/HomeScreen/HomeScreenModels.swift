@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,25 +10,27 @@ import Combine
 import Foundation
 import UIKit
 
-enum HomeScreenViewModelAction: Equatable {
+enum HomeScreenViewModelAction {
     case presentRoom(roomIdentifier: String)
+    case detachRoom(roomIdentifier: String)
     case presentRoomDetails(roomIdentifier: String)
     case presentReportRoom(roomIdentifier: String)
     case presentDeclineAndBlock(userID: String, roomID: String)
+    case presentSpace(SpaceRoomListProxyProtocol)
     case roomLeft(roomIdentifier: String)
+    case transferOwnership(roomIdentifier: String)
     case presentSecureBackupSettings
     case presentRecoveryKeyScreen
     case presentEncryptionResetScreen
     case presentSettingsScreen
     case presentFeedbackScreen
     case presentStartChatScreen
-    case presentGlobalSearch
-    case logoutWithoutConfirmation
     case logout
 }
 
 enum HomeScreenViewAction {
     case selectRoom(roomIdentifier: String)
+    case detachRoom(roomIdentifier: String)
     case showRoomDetails(roomIdentifier: String)
     case leaveRoom(roomIdentifier: String)
     case confirmLeaveRoom(roomIdentifier: String)
@@ -38,8 +41,9 @@ enum HomeScreenViewAction {
     case confirmRecoveryKey
     case resetEncryption
     case skipRecoveryKeyConfirmation
+    case dismissNewSoundBanner
     case updateVisibleItemRange(Range<Int>)
-    case globalSearch
+    case spaceFilters
     case markRoomAsUnread(roomIdentifier: String)
     case markRoomAsRead(roomIdentifier: String)
     case markRoomAsFavourite(roomIdentifier: String, isFavourite: Bool)
@@ -86,28 +90,31 @@ enum HomeScreenSecurityBannerMode: Equatable {
 }
 
 struct HomeScreenViewState: BindableState {
-    let userID: String
-    var userDisplayName: String?
-    var userAvatarURL: URL?
+    var userProfile: UserProfile
     
     var securityBannerMode = HomeScreenSecurityBannerMode.none
+    var shouldShowNewSoundBanner = false
     
-    var requiresExtraAccountSetup = false
-        
     var rooms: [HomeScreenRoom] = []
     var roomListMode: HomeScreenRoomListMode = .skeletons
     
     var hasPendingInvitations = false
-        
+    
     var selectedRoomID: String?
     
     var hideInviteAvatars = false
     
+    var roomListActivityVisibility: RoomListActivityVisibility = .current
+    
+    var roomListNotificationCountEnabled = false
+    
     var reportRoomEnabled = false
     
-    // Intentionally not mutable so that we don't have to reset the navigation bar's
-    // appearance whenever the feature flag is toggled (requires a restart).
-    let isNewBloomEnabled: Bool
+    var shouldShowSpaceFilters = false
+    var selectedSpaceFilter: SpaceServiceFilter?
+    
+    /// Inline room list search is disabled when the dedicated global search tab is shown instead (see `UserSessionFlowCoordinator`).
+    var isRoomListSearchEnabled = true
     
     var visibleRooms: [HomeScreenRoom] {
         if roomListMode == .skeletons {
@@ -116,8 +123,8 @@ struct HomeScreenViewState: BindableState {
         
         return rooms
     }
-        
-    var bindings = HomeScreenViewStateBindings()
+    
+    var bindings: HomeScreenViewStateBindings
     
     var placeholderRooms: [HomeScreenRoom] {
         (1...10).map { _ in
@@ -125,27 +132,39 @@ struct HomeScreenViewState: BindableState {
         }
     }
     
-    // Used to hide all the rooms when the search field is focused and the query is empty
+    /// Used to hide all the rooms when the search field is focused and the query is empty
     var shouldHideRoomList: Bool {
         bindings.isSearchFieldFocused && bindings.searchQuery.isEmpty
     }
     
     var shouldShowEmptyFilterState: Bool {
-        !bindings.isSearchFieldFocused && bindings.filtersState.isFiltering && visibleRooms.isEmpty
+        !bindings.isSearchFieldFocused &&
+            (bindings.filtersState.isFiltering || selectedSpaceFilter != nil) &&
+            visibleRooms.isEmpty
     }
     
     var shouldShowFilters: Bool {
         !bindings.isSearchFieldFocused && roomListMode == .rooms
     }
+    
+    var shouldShowBanner: Bool {
+        securityBannerMode.isShown || shouldShowNewSoundBanner
+    }
 }
 
 struct HomeScreenViewStateBindings {
-    var filtersState = RoomListFiltersState()
+    var filtersState: RoomListFiltersState
     var searchQuery = ""
     var isSearchFieldFocused = false
     
     var alertInfo: AlertInfo<UUID>?
     var leaveRoomAlertItem: LeaveRoomAlertItem?
+    
+    var spaceFiltersViewModel: ChatsSpaceFiltersScreenViewModel?
+}
+
+enum CallBadgeType {
+    case voice, video, none
 }
 
 struct HomeScreenRoom: Identifiable, Equatable {
@@ -157,7 +176,7 @@ struct HomeScreenRoom: Identifiable, Equatable {
     }
     
     static let placeholderLastMessage = AttributedString("Hidden last message")
-        
+    
     /// The list item identifier is it's room identifier.
     let id: String
     
@@ -176,10 +195,13 @@ struct HomeScreenRoom: Identifiable, Equatable {
     let badges: Badges
     struct Badges: Equatable {
         let isDotShown: Bool
+        let notificationCount: UInt
         let isMentionShown: Bool
         let isMuteShown: Bool
-        let isCallShown: Bool
+        let callBadgeType: CallBadgeType
     }
+    
+    var hasUnreads = false
     
     let name: String
     
@@ -193,38 +215,70 @@ struct HomeScreenRoom: Identifiable, Equatable {
     
     let lastMessage: AttributedString?
     
+    enum LastMessageState { case sending, failed }
+    let lastMessageState: LastMessageState?
+    
     let avatar: RoomAvatar
-        
+    
+    let statusEmoji: Character?
+    
     let canonicalAlias: String?
+    
+    let isTombstoned: Bool
+    
+    var displayedLastMessage: AttributedString? {
+        if isTombstoned {
+            AttributedString(L10n.screenRoomlistTombstonedRoomDescription)
+        } else if lastMessageState == .failed {
+            AttributedString(L10n.commonMessageFailedToSend)
+        } else {
+            lastMessage
+        }
+    }
     
     static func placeholder() -> HomeScreenRoom {
         HomeScreenRoom(id: UUID().uuidString,
                        roomID: nil,
                        type: .placeholder,
-                       badges: .init(isDotShown: false, isMentionShown: false, isMuteShown: false, isCallShown: false),
+                       badges: .init(isDotShown: false, notificationCount: 0, isMentionShown: false, isMuteShown: false, callBadgeType: .none),
                        name: "Placeholder room name",
                        isDirect: false,
                        isHighlighted: false,
                        isFavourite: false,
                        timestamp: "Now",
                        lastMessage: placeholderLastMessage,
+                       lastMessageState: nil,
                        avatar: .room(id: "", name: "", avatarURL: nil),
-                       canonicalAlias: nil)
+                       statusEmoji: nil,
+                       canonicalAlias: nil,
+                       isTombstoned: false)
     }
 }
 
 extension HomeScreenRoom {
-    init(summary: RoomSummary, hideUnreadMessagesBadge: Bool, seenInvites: Set<String> = []) {
+    init(summary: RoomSummary,
+         roomListActivityVisibility: RoomListActivityVisibility = .current,
+         seenInvites: Set<String> = []) {
         let roomID = summary.id
         
-        let hasUnreadMessages = hideUnreadMessagesBadge ? false : summary.hasUnreadMessages
         let isUnseenInvite = summary.joinRequestType?.isInvite == true && !seenInvites.contains(roomID)
-
-        let isDotShown = hasUnreadMessages || summary.hasUnreadMentions || summary.hasUnreadNotifications || summary.isMarkedUnread || isUnseenInvite
+        
+        let isDotShown = switch roomListActivityVisibility {
+        case .current:
+            summary.hasUnreadMessages || summary.hasUnreadMentions || summary.hasUnreadNotifications || summary.isMarkedUnread || isUnseenInvite
+        case .hide, .show:
+            (!summary.isMuted && (summary.hasUnreadNotifications || summary.hasUnreadMentions)) || summary.isMarkedUnread || isUnseenInvite
+        }
+        
         let isMentionShown = summary.hasUnreadMentions && !summary.isMuted
         let isMuteShown = summary.isMuted
-        let isCallShown = summary.hasOngoingCall
         let isHighlighted = summary.isMarkedUnread || (!summary.isMuted && (summary.hasUnreadNotifications || summary.hasUnreadMentions)) || isUnseenInvite
+        
+        let callBadge = if summary.hasOngoingCall {
+            summary.activeCallIntent == .audio ? CallBadgeType.voice : CallBadgeType.video
+        } else {
+            CallBadgeType.none
+        }
         
         let type: HomeScreenRoom.RoomType = switch summary.joinRequestType {
         case .invite(let inviter): .invite(inviterDetails: inviter.map(RoomInviterDetails.init))
@@ -236,16 +290,35 @@ extension HomeScreenRoom {
                   roomID: summary.id,
                   type: type,
                   badges: .init(isDotShown: isDotShown,
+                                notificationCount: summary.unreadNotificationsCount,
                                 isMentionShown: isMentionShown,
                                 isMuteShown: isMuteShown,
-                                isCallShown: isCallShown),
+                                callBadgeType: callBadge),
+                  hasUnreads: summary.hasUnreadMessages,
                   name: summary.name,
                   isDirect: summary.isDirect,
                   isHighlighted: isHighlighted,
                   isFavourite: summary.isFavourite,
                   timestamp: summary.lastMessageDate?.formattedMinimal(),
                   lastMessage: summary.lastMessage,
+                  lastMessageState: summary.homeScreenLastMessageState,
                   avatar: summary.avatar,
-                  canonicalAlias: summary.canonicalAlias)
+                  statusEmoji: summary.statusEmoji,
+                  canonicalAlias: summary.canonicalAlias,
+                  isTombstoned: summary.isTombstoned)
+    }
+}
+
+private extension RoomSummary {
+    var homeScreenLastMessageState: HomeScreenRoom.LastMessageState? {
+        if isTombstoned {
+            nil
+        } else {
+            switch lastMessageState {
+            case .sending: .sending
+            case .failed: .failed
+            case .none: .none
+            }
+        }
     }
 }

@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -10,15 +11,14 @@ import SwiftUI
 
 struct MessageForwardingScreenCoordinatorParameters {
     let forwardingItem: MessageForwardingItem
-    let clientProxy: ClientProxyProtocol
+    let userSession: UserSessionProtocol
     let roomSummaryProvider: RoomSummaryProviderProtocol
-    let mediaProvider: MediaProviderProtocol
     let userIndicatorController: UserIndicatorControllerProtocol
 }
 
 enum MessageForwardingScreenCoordinatorAction {
     case dismiss
-    case sent(roomID: String)
+    case sent(roomIDs: [String])
 }
 
 final class MessageForwardingScreenCoordinator: CoordinatorProtocol {
@@ -32,10 +32,9 @@ final class MessageForwardingScreenCoordinator: CoordinatorProtocol {
     
     init(parameters: MessageForwardingScreenCoordinatorParameters) {
         viewModel = MessageForwardingScreenViewModel(forwardingItem: parameters.forwardingItem,
-                                                     clientProxy: parameters.clientProxy,
+                                                     userSession: parameters.userSession,
                                                      roomSummaryProvider: parameters.roomSummaryProvider,
-                                                     userIndicatorController: parameters.userIndicatorController,
-                                                     mediaProvider: parameters.mediaProvider)
+                                                     userIndicatorController: parameters.userIndicatorController)
     }
     
     func start() {
@@ -43,13 +42,13 @@ final class MessageForwardingScreenCoordinator: CoordinatorProtocol {
             switch action {
             case .dismiss:
                 self?.actionsSubject.send(.dismiss)
-            case .sent(let roomID):
-                self?.actionsSubject.send(.sent(roomID: roomID))
+            case .sent(let roomIDs):
+                self?.actionsSubject.send(.sent(roomIDs: roomIDs))
             }
         }
         .store(in: &cancellables)
     }
-        
+    
     func toPresentable() -> AnyView {
         AnyView(MessageForwardingScreen(context: viewModel.context))
     }

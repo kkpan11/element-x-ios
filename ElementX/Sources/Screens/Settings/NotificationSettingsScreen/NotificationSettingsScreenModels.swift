@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -19,15 +20,19 @@ struct NotificationSettingsScreenViewState: BindableState {
     let isModallyPresented: Bool
     var isUserPermissionGranted: Bool?
     var fixingConfigurationMismatch = false
-    // Hide calls settings until calls are available in El-X
+    /// Hide calls settings until calls are available in El-X
     let showCallsSettings = false
     
     var showSystemNotificationsAlert: Bool {
         bindings.enableNotifications && isUserPermissionGranted == false
     }
-
+    
     var settings: NotificationSettingsScreenSettings?
     var applyingChange = false
+    var selectedAlertTone: NotificationTone
+    var availableCustomTones: [NotificationTone]
+    
+    let customToneSelectionEnabled: Bool
 }
 
 struct NotificationSettingsScreenViewStateBindings {
@@ -36,6 +41,8 @@ struct NotificationSettingsScreenViewStateBindings {
     var callsEnabled = false
     var invitationsEnabled = false
     var alertInfo: AlertInfo<NotificationSettingsScreenErrorType>?
+    var shouldShowAlertSounds = false
+    var shouldShowCustomAlertTonePicker = false
 }
 
 struct NotificationSettingsScreenSettings {
@@ -44,8 +51,8 @@ struct NotificationSettingsScreenSettings {
     let roomMentionsEnabled: Bool?
     let callsEnabled: Bool?
     let invitationsEnabled: Bool?
-    // Old clients were having specific settings for encrypted and unencrypted rooms,
-    // so it's possible for `group chats` and `direct chats` settings to be inconsistent (e.g. encrypted `direct chats` can have a different mode that unencrypted `direct chats`)
+    /// Old clients were having specific settings for encrypted and unencrypted rooms,
+    /// so it's possible for `group chats` and `direct chats` settings to be inconsistent (e.g. encrypted `direct chats` can have a different mode that unencrypted `direct chats`)
     let inconsistentSettings: [NotificationSettingsScreenInvalidSetting]
 }
 
@@ -88,6 +95,9 @@ enum NotificationSettingsScreenViewAction {
     case invitationsChanged
     case close
     case fixConfigurationMismatchTapped
+    case selectAlertTone(NotificationTone)
+    case addedCustomAlertTone(Result<URL, Error>)
+    case deleteCustomAlertTones([NotificationTone])
 }
 
 enum NotificationSettingsScreenErrorType: Hashable {

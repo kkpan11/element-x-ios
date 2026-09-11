@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,7 +10,7 @@ import Combine
 import MatrixRustSDK
 import SwiftUI
 
-typealias EncryptionResetScreenViewModelType = StateStoreViewModel<EncryptionResetScreenViewState, EncryptionResetScreenViewAction>
+typealias EncryptionResetScreenViewModelType = StateStoreViewModelV2<EncryptionResetScreenViewState, EncryptionResetScreenViewAction>
 
 class EncryptionResetScreenViewModel: EncryptionResetScreenViewModelType, EncryptionResetScreenViewModelProtocol {
     private let clientProxy: ClientProxyProtocol
@@ -22,7 +23,7 @@ class EncryptionResetScreenViewModel: EncryptionResetScreenViewModelType, Encryp
     
     private var identityResetHandle: IdentityResetHandle?
     private var passwordCancellable: AnyCancellable?
-
+    
     init(clientProxy: ClientProxyProtocol, userIndicatorController: UserIndicatorControllerProtocol) {
         self.clientProxy = clientProxy
         self.userIndicatorController = userIndicatorController
@@ -83,16 +84,16 @@ class EncryptionResetScreenViewModel: EncryptionResetScreenViewModelType, Encryp
                 }
                 
                 actionsSubject.send(.requestPassword(passwordPublisher: passwordPublisher))
-            case .oidc(let oidcInfo):
-                guard let url = URL(string: oidcInfo.approvalUrl) else {
-                    fatalError("Invalid URL received through identity reset handle: \(oidcInfo.approvalUrl)")
+            case .oAuth(let oAuthInfo):
+                guard let url = URL(string: oAuthInfo.approvalUrl) else {
+                    fatalError("Invalid URL received through identity reset handle: \(oAuthInfo.approvalUrl)")
                 }
                 
                 hideLoadingIndicator()
                 
-                actionsSubject.send(.requestOIDCAuthorisation(url: url))
+                actionsSubject.send(.requestOAuthAuthorisation(url: url))
                 
-                await resetWithOIDCAuthorisation()
+                await resetWithOAuthAuthorisation()
             }
         case .failure(let error):
             MXLog.error("Failed resetting encryption with error \(error)")
@@ -120,7 +121,7 @@ class EncryptionResetScreenViewModel: EncryptionResetScreenViewModelType, Encryp
         }
     }
     
-    private func resetWithOIDCAuthorisation() async {
+    private func resetWithOAuthAuthorisation() async {
         guard let identityResetHandle else {
             fatalError("Requested reset flow continuation without a stored handle")
         }

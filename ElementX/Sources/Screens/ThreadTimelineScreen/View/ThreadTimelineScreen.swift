@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,43 +10,83 @@ import Compound
 import SwiftUI
 
 struct ThreadTimelineScreen: View {
-    @ObservedObject var context: ThreadTimelineScreenViewModel.Context
-    @ObservedObject var timelineContext: TimelineViewModel.Context
-        
+    @ObservedObject private var context: ThreadTimelineScreenViewModelType.Context
+    @ObservedObject private var timelineContext: TimelineViewModelType.Context
+    private let composerToolbar: ComposerToolbar
+    
+    init(context: ThreadTimelineScreenViewModelType.Context,
+         timelineContext: TimelineViewModelType.Context,
+         composerToolbar: ComposerToolbar) {
+        self.context = context
+        self.timelineContext = timelineContext
+        self.composerToolbar = composerToolbar
+    }
+    
     var body: some View {
-        content
-            .navigationTitle("Thread")
-            .navigationBarTitleDisplayMode(.inline)
+        TimelineView(timelineContext: timelineContext)
             .background(.compound.bgCanvasDefault)
-            .interactiveDismissDisabled()
+            .toolbarRole(RoomHeaderView.toolbarRole)
+            .navigationTitle(L10n.commonThread)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { toolbar }
+            .toolbarBackground(.visible, for: .navigationBar) // Fix the toolbar's background.
+            .navigationBarBackButtonHidden(isSelectionActive)
             .timelineMediaPreview(viewModel: $context.mediaPreviewViewModel)
-            .sheet(item: $timelineContext.manageMemberViewModel) {
-                ManageRoomMemberSheetView(context: $0.context)
-            }
-            .sheet(item: $timelineContext.debugInfo) { TimelineItemDebugView(info: $0) }
-            .sheet(item: $timelineContext.actionMenuInfo) { info in
-                let actions = TimelineItemMenuActionProvider(timelineItem: info.item,
-                                                             canCurrentUserRedactSelf: timelineContext.viewState.canCurrentUserRedactSelf,
-                                                             canCurrentUserRedactOthers: timelineContext.viewState.canCurrentUserRedactOthers,
-                                                             canCurrentUserPin: timelineContext.viewState.canCurrentUserPin,
-                                                             pinnedEventIDs: timelineContext.viewState.pinnedEventIDs,
-                                                             isDM: timelineContext.viewState.isDirectOneToOneRoom,
-                                                             isViewSourceEnabled: timelineContext.viewState.isViewSourceEnabled,
-                                                             timelineKind: timelineContext.viewState.timelineKind,
-                                                             emojiProvider: timelineContext.viewState.emojiProvider)
-                    .makeActions()
-                if let actions {
-                    TimelineItemMenu(item: info.item, actions: actions)
-                        .environmentObject(timelineContext)
+            .overlay(alignment: .top) {
+                FloatingDateBadge(dateText: timelineContext.floatingDate?.formattedDateSeparator()) {
+                    timelineContext.send(viewAction: .scrollToFirstItemForCurrentDate)
                 }
+                .padding(.top, 13)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                TimelineScrollButton(isHidden: !timelineContext.viewState.shouldShowScrollToBottomButton) {
+                    timelineContext.send(viewAction: .scrollToBottom)
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                composer
+                    .padding(.top, 8)
+                    .background(Color.compound.bgCanvasDefault.ignoresSafeArea())
+                    .environmentObject(timelineContext)
+                    .environment(\.timelineContext, timelineContext)
+                    // Make sure the reply header honours the hideTimelineMedia setting too.
+                    .environment(\.shouldAutomaticallyLoadImages, !timelineContext.viewState.hideTimelineMedia)
+                    .collapsedInPlace(isSelectionActive)
             }
     }
     
+    private var isSelectionActive: Bool {
+        timelineContext.viewState.selection.isActive
+    }
+    
     @ViewBuilder
-    private var content: some View {
-        TimelineView()
-            .id(timelineContext.viewState.roomID)
-            .environmentObject(timelineContext)
-            .environment(\.focussedEventID, timelineContext.viewState.timelineState.focussedEvent?.eventID)
+    private var composer: some View {
+        if context.viewState.canSendMessage {
+            composerToolbar
+        } else {
+            ComposerDisabledView()
+        }
+    }
+    
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        if isSelectionActive {
+            TimelineSelectionToolbar(count: timelineContext.viewState.selection.count) {
+                timelineContext.send(viewAction: .clearSelection)
+            }
+        } else {
+            // .principal + .primaryAction works better than .navigation leading + trailing
+            // as the latter disables interaction in the action button for rooms with long names
+            ToolbarItem(placement: .principal) {
+                RoomHeaderView(roomName: L10n.commonThread,
+                               roomSubtitle: context.viewState.roomTitle,
+                               roomAvatar: context.viewState.roomAvatar,
+                               dmRecipientDetails: context.viewState.dmRecipientDetails,
+                               roomHistorySharingState: context.viewState.roomHistorySharingState,
+                               mediaProvider: context.mediaProvider) {
+                    // There is no action but the iOS 26 designs have it looking like a button.
+                }
+            }
+        }
     }
 }

@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -11,7 +12,6 @@ import SwiftUI
 typealias RoomSelectionScreenViewModelType = StateStoreViewModel<RoomSelectionScreenViewState, RoomSelectionScreenViewAction>
 
 class RoomSelectionScreenViewModel: RoomSelectionScreenViewModelType, RoomSelectionScreenViewModelProtocol {
-    private let clientProxy: ClientProxyProtocol
     private let roomSummaryProvider: RoomSummaryProviderProtocol
     
     private var actionsSubject: PassthroughSubject<RoomSelectionScreenViewModelAction, Never> = .init()
@@ -19,14 +19,12 @@ class RoomSelectionScreenViewModel: RoomSelectionScreenViewModelType, RoomSelect
     var actionsPublisher: AnyPublisher<RoomSelectionScreenViewModelAction, Never> {
         actionsSubject.eraseToAnyPublisher()
     }
-
-    init(clientProxy: ClientProxyProtocol,
-         roomSummaryProvider: RoomSummaryProviderProtocol,
-         mediaProvider: MediaProviderProtocol) {
-        self.clientProxy = clientProxy
+    
+    init(userSession: UserSessionProtocol,
+         roomSummaryProvider: RoomSummaryProviderProtocol) {
         self.roomSummaryProvider = roomSummaryProvider
         
-        super.init(initialViewState: RoomSelectionScreenViewState(), mediaProvider: mediaProvider)
+        super.init(initialViewState: RoomSelectionScreenViewState(), mediaProvider: userSession.mediaProvider)
         
         roomSummaryProvider.roomListPublisher
             .receive(on: DispatchQueue.main)

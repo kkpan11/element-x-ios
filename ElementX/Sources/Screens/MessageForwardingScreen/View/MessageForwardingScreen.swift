@@ -1,11 +1,13 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Compound
+import MatrixRustSDKMocks
 import SwiftUI
 
 struct MessageForwardingScreen: View {
@@ -16,7 +18,8 @@ struct MessageForwardingScreen: View {
             Section {
                 ForEach(context.viewState.rooms) { room in
                     MessageForwardingListRow(room: room,
-                                             isSelected: context.viewState.selectedRoomID == room.id,
+                                             isSelected: context.viewState.selectedRoomIDs.contains(room.id),
+                                             isDisabled: context.viewState.isAtRoomSelectionLimit && !context.viewState.selectedRoomIDs.contains(room.id),
                                              context: context)
                 }
                 // Replace these with ScrollView's `scrollPosition` when dropping iOS 16.
@@ -45,7 +48,7 @@ struct MessageForwardingScreen: View {
                 Button(L10n.actionSend) {
                     context.send(viewAction: .send)
                 }
-                .disabled(context.viewState.selectedRoomID == nil)
+                .disabled(context.viewState.selectedRoomIDs.isEmpty)
             }
         }
         .searchController(query: $context.searchQuery, showsCancelButton: false)
@@ -57,6 +60,7 @@ struct MessageForwardingScreen: View {
     private var emptyRectangle: some View {
         Rectangle()
             .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
     }
 }
 
@@ -65,6 +69,7 @@ private struct MessageForwardingListRow: View {
     
     let room: MessageForwardingRoom
     let isSelected: Bool
+    let isDisabled: Bool
     let context: MessageForwardingScreenViewModel.Context
     
     var body: some View {
@@ -74,9 +79,10 @@ private struct MessageForwardingListRow: View {
                 kind: .selection(isSelected: isSelected) {
                     context.send(viewAction: .selectRoom(roomID: room.id))
                 })
+                .disabled(isDisabled)
     }
     
-    @ViewBuilder @MainActor
+    @ViewBuilder
     var avatar: some View {
         if dynamicTypeSize < .accessibility3 {
             RoomAvatarImage(avatar: room.avatar,
@@ -95,13 +101,12 @@ struct MessageForwardingScreen_Previews: PreviewProvider, TestablePreview {
         let summaryProvider = RoomSummaryProviderMock(.init(state: .loaded(.mockRooms)))
         let viewModel = MessageForwardingScreenViewModel(forwardingItem: .init(id: .randomEvent,
                                                                                roomID: "",
-                                                                               content: .init(noPointer: .init())),
-                                                         clientProxy: ClientProxyMock(.init()),
+                                                                               content: RoomMessageEventContentWithoutRelationSDKMock()),
+                                                         userSession: UserSessionMock(.init()),
                                                          roomSummaryProvider: summaryProvider,
-                                                         userIndicatorController: UserIndicatorControllerMock(),
-                                                         mediaProvider: MediaProviderMock(configuration: .init()))
+                                                         userIndicatorController: UserIndicatorControllerMock())
         
-        NavigationStack {
+        ElementNavigationStack {
             MessageForwardingScreen(context: viewModel.context)
         }
     }

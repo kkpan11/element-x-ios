@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -40,13 +41,13 @@ private struct MediaPreviewViewController: UIViewControllerRepresentable {
     let viewModel: TimelineMediaPreviewViewModel
     let dismissalPublisher: PassthroughSubject<Void, Never>
     let onDismiss: () -> Void
-
+    
     func makeUIViewController(context: Context) -> PreviewHostingController {
         PreviewHostingController(viewModel: viewModel,
                                  dismissalPublisher: dismissalPublisher,
                                  onDismiss: onDismiss)
     }
-
+    
     func updateUIViewController(_ uiViewController: PreviewHostingController, context: Context) { }
     
     /// A view controller that hosts the QuickLook preview.
@@ -61,14 +62,13 @@ private struct MediaPreviewViewController: UIViewControllerRepresentable {
         private var hasBeenPresented = false
         
         private var dismissalObserver: AnyCancellable?
-        private var cancellables: Set<AnyCancellable> = []
         
         init(viewModel: TimelineMediaPreviewViewModel,
              dismissalPublisher: PassthroughSubject<Void, Never>,
              onDismiss: @escaping () -> Void) {
             self.onDismiss = onDismiss
             previewController = TimelineMediaPreviewController(context: viewModel.context)
-
+            
             super.init(nibName: nil, bundle: nil)
             
             // The QLPreviewController will not automatically dismiss itself when the underlying view is removed
@@ -100,10 +100,10 @@ private struct MediaPreviewViewController: UIViewControllerRepresentable {
             ])
         }
         
-        // Don't use viewWillAppear due to the following warning:
-        // Presenting view controller <QLPreviewController> from detached view controller <HostingController> is not supported,
-        // and may result in incorrect safe area insets and a corrupt root presentation. Make sure <HostingController> is in
-        // the view controller hierarchy before presenting from it. Will become a hard exception in a future release.
+        /// Don't use viewWillAppear due to the following warning:
+        /// Presenting view controller <QLPreviewController> from detached view controller <HostingController> is not supported,
+        /// and may result in incorrect safe area insets and a corrupt root presentation. Make sure <HostingController> is in
+        /// the view controller hierarchy before presenting from it. Will become a hard exception in a future release.
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
             
@@ -162,10 +162,9 @@ struct TimelineMediaPreviewModifier_Previews: PreviewProvider {
                                                        thumbnailSource: nil,
                                                        contentType: .pdf))
         
-        let timelineController = MockTimelineController(timelineKind: .media(.mediaFilesScreen))
-        timelineController.timelineItems = [item]
+        let timelineController = TimelineControllerMock(.init(timelineKind: .media(.mediaFilesScreen), timelineItems: [item]))
         
-        let mediaProvider = MediaProviderMock(configuration: .init())
+        let mediaProvider = MediaProviderMock(.init())
         
         if isDownloading {
             mediaProvider.loadFileFromSourceFilenameClosure = { _, _ in

@@ -1,26 +1,29 @@
 //
-// Copyright 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2024-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
 
-import MatrixRustSDK
-
 final class ComposerDraftService: ComposerDraftServiceProtocol {
     private let roomProxy: JoinedRoomProxyProtocol
+    private let threadRootEventID: String?
     private let timelineItemfactory: RoomTimelineItemFactoryProtocol
     private var volatileDraft: ComposerDraftProxy?
     
-    init(roomProxy: JoinedRoomProxyProtocol, timelineItemfactory: RoomTimelineItemFactoryProtocol) {
+    init(roomProxy: JoinedRoomProxyProtocol,
+         timelineItemfactory: RoomTimelineItemFactoryProtocol,
+         threadRootEventID: String?) {
         self.roomProxy = roomProxy
+        self.threadRootEventID = threadRootEventID
         self.timelineItemfactory = timelineItemfactory
     }
     
     func saveDraft(_ draft: ComposerDraftProxy) async -> Result<Void, ComposerDraftServiceError> {
-        switch await roomProxy.saveDraft(draft.toRust) {
+        switch await roomProxy.saveDraft(draft.toRust, threadRootEventID: threadRootEventID) {
         case .success:
             MXLog.info("Successfully saved draft")
             return .success(())
@@ -31,7 +34,7 @@ final class ComposerDraftService: ComposerDraftServiceProtocol {
     }
     
     func loadDraft() async -> Result<ComposerDraftProxy?, ComposerDraftServiceError> {
-        switch await roomProxy.loadDraft() {
+        switch await roomProxy.loadDraft(threadRootEventID: threadRootEventID) {
         case .success(let draft):
             guard let draft else {
                 return .success(nil)
@@ -54,7 +57,7 @@ final class ComposerDraftService: ComposerDraftServiceProtocol {
     }
     
     func clearDraft() async -> Result<Void, ComposerDraftServiceError> {
-        switch await roomProxy.clearDraft() {
+        switch await roomProxy.clearDraft(threadRootEventID: threadRootEventID) {
         case .success:
             MXLog.info("Successfully cleared draft")
             return .success(())

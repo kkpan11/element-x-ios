@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -12,8 +13,9 @@ struct NotificationSettingsScreenCoordinatorParameters {
     weak var navigationStackCoordinator: NavigationStackCoordinator?
     let userSession: UserSessionProtocol
     let userNotificationCenter: UserNotificationCenterProtocol
-    let notificationSettings: NotificationSettingsProxyProtocol
+    let userIndicatorController: UserIndicatorControllerProtocol
     let isModallyPresented: Bool
+    let appSettings: AppSettings
 }
 
 enum NotificationSettingsScreenCoordinatorAction {
@@ -37,9 +39,11 @@ final class NotificationSettingsScreenCoordinator: CoordinatorProtocol {
     init(parameters: NotificationSettingsScreenCoordinatorParameters) {
         self.parameters = parameters
         
-        viewModel = NotificationSettingsScreenViewModel(appSettings: ServiceLocator.shared.settings,
+        viewModel = NotificationSettingsScreenViewModel(appSettings: parameters.appSettings,
                                                         userNotificationCenter: parameters.userNotificationCenter,
-                                                        notificationSettingsProxy: parameters.notificationSettings,
+                                                        notificationToneManager: NotificationToneManager(appSettings: parameters.appSettings),
+                                                        notificationSettingsProxy: parameters.userSession.clientProxy.notificationSettings,
+                                                        userIndicatorController: parameters.userIndicatorController,
                                                         isModallyPresented: parameters.isModallyPresented)
     }
     
@@ -67,8 +71,7 @@ final class NotificationSettingsScreenCoordinator: CoordinatorProtocol {
     private func presentEditScreen(chatType: NotificationSettingsChatType) {
         let editSettingsParameters = NotificationSettingsEditScreenCoordinatorParameters(navigationStackCoordinator: parameters.navigationStackCoordinator,
                                                                                          chatType: chatType,
-                                                                                         userSession: parameters.userSession,
-                                                                                         notificationSettings: parameters.notificationSettings)
+                                                                                         userSession: parameters.userSession)
         let editSettingsCoordinator = NotificationSettingsEditScreenCoordinator(parameters: editSettingsParameters)
         navigationStackCoordinator?.push(editSettingsCoordinator)
     }

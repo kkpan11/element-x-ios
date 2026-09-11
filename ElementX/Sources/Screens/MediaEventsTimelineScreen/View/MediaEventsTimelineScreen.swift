@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,7 +10,8 @@ import Compound
 import SwiftUI
 
 struct MediaEventsTimelineScreen: View {
-    @ObservedObject var context: MediaEventsTimelineScreenViewModel.Context
+    @Bindable var context: MediaEventsTimelineScreenViewModel.Context
+    @State private var sheetHeight = CGFloat.zero
     
     var body: some View {
         mainContent
@@ -20,37 +22,51 @@ struct MediaEventsTimelineScreen: View {
             .toolbar { toolbar }
             .environmentObject(context.viewState.activeTimelineContext)
             .environment(\.timelineContext, context.viewState.activeTimelineContext)
-            .onChange(of: context.screenMode) { _, _ in
-                context.send(viewAction: .changedScreenMode)
-            }
             .timelineMediaPreview(viewModel: $context.mediaPreviewViewModel)
+            .sheet(item: $context.mediaPreviewSheetViewModel) { sheet in
+                if let mediaItem = sheet.state.currentItem.mediaItem {
+                    TimelineMediaPreviewDetailsView(item: mediaItem,
+                                                    context: sheet.context,
+                                                    preferredColorScheme: nil,
+                                                    sheetHeight: $sheetHeight)
+                        .presentationDetents([.height(sheetHeight)])
+                }
+            }
     }
     
-    // The scale effects do the following:
-    // * flip the scrollView vertically to keep the items
-    // at the bottom and have pagination working properly
-    // * flip the grid vertically to counteract the scroll view
-    // but also horizontally to preserve the correct item order
-    // * flip the items on both axes have them render correctly
+    /// The scale effects do the following:
+    /// * flip the scrollView vertically to keep the items
+    /// at the bottom and have pagination working properly
+    /// * flip the grid vertically to counteract the scroll view
+    /// but also horizontally to preserve the correct item order
+    /// * flip the items on both axes have them render correctly
     @ViewBuilder
     private var mainContent: some View {
         if context.viewState.shouldShowEmptyState {
             emptyState
         } else {
-            ScrollView {
-                Group {
-                    switch context.viewState.bindings.screenMode {
-                    case .media:
-                        mediaContent
-                    case .files:
-                        filesContent
-                    }
-                    
-                    header
-                }
-            }
-            .scaleEffect(.init(width: 1, height: -1))
+            scrollView
+                // Remove the glass effect of iOS 26+
+                // A flipped table view will always trigger it
+                // since the nav bar thinks is always at the bottom.
+                .backportScrollEdgeEffectHidden()
         }
+    }
+    
+    private var scrollView: some View {
+        ScrollView {
+            Group {
+                switch context.viewState.screenMode {
+                case .media:
+                    mediaContent
+                case .files:
+                    filesContent
+                }
+                
+                header
+            }
+        }
+        .scaleEffect(.init(width: 1, height: -1))
     }
     
     @ViewBuilder
@@ -63,8 +79,11 @@ struct MediaEventsTimelineScreen: View {
                         Button {
                             tappedItem(item)
                         } label: {
-                            viewForTimelineItem(item)
+                            viewForTimelineItem(item, screenMode: .media)
                                 .scaleEffect(CGSize(width: -1, height: -1))
+                        }
+                        .accessibleLongPress(named: L10n.actionOpenContextMenu) {
+                            context.send(viewAction: .longPressedItem(item: item))
                         }
                     }
                 } footer: {
@@ -77,7 +96,6 @@ struct MediaEventsTimelineScreen: View {
         .scaleEffect(.init(width: -1, height: 1))
     }
     
-    @ViewBuilder
     private var filesContent: some View {
         LazyVStack(alignment: .center, spacing: 16) {
             ForEach(context.viewState.groups) { group in
@@ -85,14 +103,22 @@ struct MediaEventsTimelineScreen: View {
                     ForEach(group.items) { item in
                         VStack(spacing: 20) {
                             Divider()
+                                .accessibilityHidden(true)
                             
                             Button {
                                 tappedItem(item)
                             } label: {
-                                viewForTimelineItem(item)
+                                viewForTimelineItem(item, screenMode: .files)
                                     .scaleEffect(CGSize(width: 1, height: -1))
                             }
+                            .accessibilityRepresentation {
+                                viewForTimelineItem(item, screenMode: .files)
+                            }
+                            .accessibleLongPress(named: L10n.actionOpenContextMenu) {
+                                context.send(viewAction: .longPressedItem(item: item))
+                            }
                         }
+                        .accessibilityElement(children: .combine)
                         .padding(.horizontal, 16)
                     }
                 } footer: {
@@ -124,18 +150,19 @@ struct MediaEventsTimelineScreen: View {
         }
     }
     
+    /// The mode check makes sure that stale items from the other mode's layout are never rendered.
     @ViewBuilder
-    private func viewForTimelineItem(_ item: RoomTimelineItemViewState) -> some View {
+    private func viewForTimelineItem(_ item: RoomTimelineItemViewState, screenMode: MediaEventsTimelineScreenMode) -> some View {
         switch item.type {
-        case .image(let timelineItem):
+        case .image(let timelineItem) where screenMode == .media:
             ImageMediaEventsTimelineView(timelineItem: timelineItem)
-        case .video(let timelineItem):
+        case .video(let timelineItem) where screenMode == .media:
             VideoMediaEventsTimelineView(timelineItem: timelineItem)
-        case .file(let timelineItem):
+        case .file(let timelineItem) where screenMode == .files:
             FileMediaEventsTimelineView(timelineItem: timelineItem)
-        case .audio(let timelineItem):
+        case .audio(let timelineItem) where screenMode == .files:
             AudioMediaEventsTimelineView(timelineItem: timelineItem)
-        case .voice(let timelineItem):
+        case .voice(let timelineItem) where screenMode == .files:
             let defaultPlayerState = AudioPlayerState(id: .timelineItemIdentifier(timelineItem.id), title: L10n.commonVoiceMessage, duration: 0)
             let playerState = context.viewState.activeTimelineContext.viewState.audioPlayerStateProvider?(timelineItem.id) ?? defaultPlayerState
             VoiceMessageMediaEventsTimelineView(timelineItem: timelineItem, playerState: playerState)
@@ -144,11 +171,10 @@ struct MediaEventsTimelineScreen: View {
         }
     }
     
-    @ViewBuilder
     private var emptyState: some View {
         FullscreenDialog(topPadding: UIConstants.iconTopPaddingToNavigationBar, background: .gradient) {
             VStack(spacing: 16) {
-                switch context.screenMode {
+                switch context.viewState.screenMode {
                 case .media:
                     emptyMedia
                 case .files:
@@ -159,61 +185,78 @@ struct MediaEventsTimelineScreen: View {
         } bottomContent: { EmptyView() }
     }
     
+    @ViewBuilder
     private var emptyMedia: some View {
-        Group {
-            BigIcon(icon: \.image)
-            
-            Text(L10n.screenMediaBrowserMediaEmptyStateTitle)
-                .foregroundColor(.compound.textPrimary)
-                .font(.compound.headingMDBold)
-                .multilineTextAlignment(.center)
-            
-            Text(L10n.screenMediaBrowserMediaEmptyStateSubtitle)
-                .foregroundColor(.compound.textSecondary)
-                .font(.compound.bodyMD)
-                .multilineTextAlignment(.center)
-        }
+        BigIcon(icon: \.image)
+        
+        Text(L10n.screenMediaBrowserMediaEmptyStateTitle)
+            .foregroundColor(.compound.textPrimary)
+            .font(.compound.headingMDBold)
+            .multilineTextAlignment(.center)
+        
+        Text(L10n.screenMediaBrowserMediaEmptyStateSubtitle)
+            .foregroundColor(.compound.textSecondary)
+            .font(.compound.bodyMD)
+            .multilineTextAlignment(.center)
     }
     
+    @ViewBuilder
     private var emptyFiles: some View {
-        Group {
-            BigIcon(icon: \.document)
-            
-            Text(L10n.screenMediaBrowserFilesEmptyStateTitle)
-                .foregroundColor(.compound.textPrimary)
-                .font(.compound.headingMDBold)
-                .multilineTextAlignment(.center)
-            
-            Text(L10n.screenMediaBrowserFilesEmptyStateSubtitle)
-                .foregroundColor(.compound.textSecondary)
-                .font(.compound.bodyMD)
-                .multilineTextAlignment(.center)
-        }
+        BigIcon(icon: \.document)
+        
+        Text(L10n.screenMediaBrowserFilesEmptyStateTitle)
+            .foregroundColor(.compound.textPrimary)
+            .font(.compound.headingMDBold)
+            .multilineTextAlignment(.center)
+        
+        Text(L10n.screenMediaBrowserFilesEmptyStateSubtitle)
+            .foregroundColor(.compound.textSecondary)
+            .font(.compound.bodyMD)
+            .multilineTextAlignment(.center)
     }
     
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            Picker("", selection: $context.screenMode) {
-                Text(L10n.screenMediaBrowserListModeMedia)
-                    .padding()
-                    .tag(MediaEventsTimelineScreenMode.media)
-                Text(L10n.screenMediaBrowserListModeFiles)
-                    .padding()
-                    .tag(MediaEventsTimelineScreenMode.files)
+            if #available(iOS 26, *) {
+                screenModePicker
+            } else {
+                screenModePicker
+                    .frame(idealWidth: .greatestFiniteMagnitude)
             }
-            .pickerStyle(.segmented)
-            .frame(idealWidth: .greatestFiniteMagnitude)
         }
         
-        ToolbarItem(placement: .primaryAction) {
-            // Reserve the space trailing space to match the back button.
-            CompoundIcon(\.search).hidden()
+        if #available(iOS 26, *) {
+            ToolbarSpacer()
+        } else {
+            ToolbarItem(placement: .primaryAction) {
+                // Reserve the space trailing space to match the back button.
+                CompoundIcon(\.search).hidden()
+            }
         }
+    }
+    
+    private var screenModePicker: some View {
+        Picker("", selection: Binding(get: { context.viewState.screenMode },
+                                      set: { context.send(viewAction: .changeScreenMode($0)) })) {
+            Text(L10n.screenMediaBrowserListModeMedia)
+                .padding()
+                .tag(MediaEventsTimelineScreenMode.media)
+            Text(L10n.screenMediaBrowserListModeFiles)
+                .padding()
+                .tag(MediaEventsTimelineScreenMode.files)
+        }
+        .pickerStyle(.segmented)
     }
     
     func tappedItem(_ item: RoomTimelineItemViewState) {
         context.send(viewAction: .tappedItem(item: item))
+    }
+}
+
+extension TimelineMediaPreviewViewModel: Identifiable {
+    var id: UUID {
+        instanceID
     }
 }
 
@@ -226,22 +269,22 @@ struct MediaEventsTimelineScreen_Previews: PreviewProvider, TestablePreview {
     static let emptyFilesViewModel = makeViewModel(empty: true, screenMode: .files)
     
     static var previews: some View {
-        NavigationStack {
-            MediaEventsTimelineScreen(context: mediaViewModel.context)
-        }
-        .previewDisplayName("Media")
+        MediaEventsTimelineScreen(context: mediaViewModel.context)
+            .frame(height: 1800)
+            .previewLayout(.sizeThatFits)
+            .previewDisplayName("Media")
         
-        NavigationStack {
-            MediaEventsTimelineScreen(context: filesViewModel.context)
-        }
-        .previewDisplayName("Files")
+        MediaEventsTimelineScreen(context: filesViewModel.context)
+            .frame(height: 1800)
+            .previewLayout(.sizeThatFits)
+            .previewDisplayName("Files")
         
-        NavigationStack {
+        ElementNavigationStack {
             MediaEventsTimelineScreen(context: emptyMediaViewModel.context)
         }
         .previewDisplayName("Empty Media")
         
-        NavigationStack {
+        ElementNavigationStack {
             MediaEventsTimelineScreen(context: emptyFilesViewModel.context)
         }
         .previewDisplayName("Empty Files")
@@ -249,32 +292,120 @@ struct MediaEventsTimelineScreen_Previews: PreviewProvider, TestablePreview {
     
     private static func makeViewModel(empty: Bool = false,
                                       screenMode: MediaEventsTimelineScreenMode) -> MediaEventsTimelineScreenViewModel {
-        MediaEventsTimelineScreenViewModel(mediaTimelineViewModel: makeTimelineViewModel(empty: empty),
-                                           filesTimelineViewModel: makeTimelineViewModel(empty: empty),
+        MediaEventsTimelineScreenViewModel(mediaTimelineViewModel: makeTimelineViewModel(empty: empty, screenMode: .media),
+                                           filesTimelineViewModel: makeTimelineViewModel(empty: empty, screenMode: .files),
                                            initialScreenMode: screenMode,
-                                           mediaProvider: MediaProviderMock(configuration: .init()),
+                                           mediaProvider: MediaProviderMock(.init()),
                                            userIndicatorController: UserIndicatorControllerMock(),
                                            appMediator: AppMediatorMock())
     }
     
-    private static func makeTimelineViewModel(empty: Bool) -> TimelineViewModel {
+    private static func makeTimelineViewModel(empty: Bool, screenMode: MediaEventsTimelineScreenMode) -> TimelineViewModel {
         let timelineController = if empty {
-            MockTimelineController.emptyMediaGallery
+            TimelineControllerMock.emptyMediaGallery
         } else {
-            MockTimelineController.mediaGallery
+            makeTimelineController(screenMode: screenMode)
         }
         
+        let appSettings = AppSettings.volatile()
         return TimelineViewModel(roomProxy: JoinedRoomProxyMock(.init(name: "Preview room")),
                                  timelineController: timelineController,
-                                 mediaProvider: MediaProviderMock(configuration: .init()),
+                                 userSession: UserSessionMock(.init(contentScannerService: contentScannerService)),
                                  mediaPlayerProvider: MediaPlayerProviderMock(),
-                                 voiceMessageMediaManager: VoiceMessageMediaManagerMock(),
                                  userIndicatorController: UserIndicatorControllerMock(),
-                                 appMediator: AppMediatorMock.default,
-                                 appSettings: ServiceLocator.shared.settings,
-                                 analyticsService: ServiceLocator.shared.analytics,
-                                 emojiProvider: EmojiProvider(appSettings: ServiceLocator.shared.settings),
-                                 timelineControllerFactory: TimelineControllerFactoryMock(.init()),
-                                 clientProxy: ClientProxyMock(.init()))
+                                 appMediator: AppMediatorMock(.init()),
+                                 appSettings: appSettings,
+                                 analyticsService: AnalyticsServiceMock(.init()),
+                                 emojiProvider: EmojiProvider(appSettings: appSettings),
+                                 linkMetadataProvider: LinkMetadataProvider(),
+                                 timelineControllerFactory: TimelineControllerFactoryMock(.init()))
+    }
+    
+    // MARK: Content scanning
+    
+    /// A content scanner that reports the dedicated mock sources as being scanned/unsafe and everything else as safe.
+    private static let contentScannerService = {
+        let contentScannerService = ContentScannerServiceMock()
+        contentScannerService.scanResultFromSourceClosure = { source in
+            switch source.url {
+            case .mockMXCScanning: nil
+            case .mockMXCUnsafe: false
+            default: true
+            }
+        }
+        contentScannerService.loadScanResultFromSourceClosure = { source in
+            switch source.url {
+            case .mockMXCScanning:
+                // Never resolve so that the scanning state remains visible.
+                try? await Task.sleep(for: .seconds(3600))
+                return .failure(.failedScanning)
+            case .mockMXCUnsafe:
+                return .success(false)
+            default:
+                return .success(true)
+            }
+        }
+        return contentScannerService
+    }()
+    
+    /// The regular gallery items followed by one that is being scanned and an unsafe one.
+    private static func makeTimelineController(screenMode: MediaEventsTimelineScreenMode) -> TimelineControllerMock {
+        var timelineItems: [RoomTimelineItemProtocol] = (0..<5).reduce([]) { partialResult, _ in
+            partialResult + [TimelineFixtures.separator] + TimelineFixtures.mediaChunk
+        }
+        
+        switch screenMode {
+        case .media:
+            timelineItems.append(contentsOf: [makeImageItem(url: .mockMXCScanning), makeImageItem(url: .mockMXCUnsafe)])
+        case .files:
+            timelineItems.append(contentsOf: [makeFileItem(url: .mockMXCScanning), makeFileItem(url: .mockMXCUnsafe)])
+        }
+        
+        // Mirrors the message types that the flow coordinator filters each timeline to.
+        let allowedGalleryItemTypes: [TimelineAllowedGalleryItemType] = switch screenMode {
+        case .media: [.image, .video]
+        case .files: [.file, .audio]
+        }
+        
+        return TimelineControllerMock(.init(timelineKind: .media(.mediaFilesScreen),
+                                            timelineItems: timelineItems,
+                                            allowedGalleryItemTypes: allowedGalleryItemTypes))
+    }
+    
+    private static func makeImageItem(url: URL) -> ImageRoomTimelineItem {
+        guard let mediaSource = try? MediaSourceProxy(url: url, mimeType: "image/jpg") else {
+            fatalError("Invalid mock media source URL")
+        }
+        
+        return ImageRoomTimelineItem(id: .randomEvent,
+                                     timestamp: .mock,
+                                     isOutgoing: false,
+                                     isEditable: false,
+                                     canBeRepliedTo: true,
+                                     sender: .init(id: "@bob:matrix.org"),
+                                     content: .init(filename: "image.jpg",
+                                                    imageInfo: .init(source: mediaSource, width: 2730, height: 2048, mimeType: "image/jpg", fileSize: nil),
+                                                    thumbnailInfo: nil,
+                                                    blurhash: "KpE4oyayR5|GbHb];3j@of"))
+    }
+    
+    private static func makeFileItem(url: URL) -> FileRoomTimelineItem {
+        guard let mediaSource = try? MediaSourceProxy(url: url, mimeType: nil) else {
+            fatalError("Invalid mock media source URL")
+        }
+        
+        return FileRoomTimelineItem(id: .randomEvent,
+                                    timestamp: .mock,
+                                    isOutgoing: false,
+                                    isEditable: false,
+                                    canBeRepliedTo: true,
+                                    sender: .init(id: "@bob:matrix.org"),
+                                    content: .init(filename: "important-document.pdf",
+                                                   caption: nil,
+                                                   formattedCaption: nil,
+                                                   source: mediaSource,
+                                                   fileSize: 3 * 1024 * 1024,
+                                                   thumbnailSource: nil,
+                                                   contentType: nil))
     }
 }

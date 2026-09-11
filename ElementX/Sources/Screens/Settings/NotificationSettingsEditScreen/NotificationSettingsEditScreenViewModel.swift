@@ -1,14 +1,15 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
 import SwiftUI
 
-typealias NotificationSettingsEditScreenViewModelType = StateStoreViewModel<NotificationSettingsEditScreenViewState, NotificationSettingsEditScreenViewAction>
+typealias NotificationSettingsEditScreenViewModelType = StateStoreViewModelV2<NotificationSettingsEditScreenViewState, NotificationSettingsEditScreenViewAction>
 
 class NotificationSettingsEditScreenViewModel: NotificationSettingsEditScreenViewModelType, NotificationSettingsEditScreenViewModelProtocol {
     private var actionsSubject: PassthroughSubject<NotificationSettingsEditScreenViewModelAction, Never> = .init()
@@ -17,20 +18,18 @@ class NotificationSettingsEditScreenViewModel: NotificationSettingsEditScreenVie
     private let userSession: UserSessionProtocol
     private let roomSummaryProvider: RoomSummaryProviderProtocol?
     
-    // periphery:ignore - cancellable tasks get cancelled when reassigned
     @CancellableTask private var fetchDefaultRoomNotificationModesTask: Task<Void, Error>?
-    // periphery:ignore - cancellable tasks get cancelled when reassigned
     @CancellableTask private var updateRoomsWithUserDefinedModeTask: Task<Void, Error>?
     
     var actions: AnyPublisher<NotificationSettingsEditScreenViewModelAction, Never> {
         actionsSubject.eraseToAnyPublisher()
     }
     
-    init(chatType: NotificationSettingsChatType, userSession: UserSessionProtocol, notificationSettingsProxy: NotificationSettingsProxyProtocol) {
+    init(chatType: NotificationSettingsChatType, userSession: UserSessionProtocol) {
         let bindings = NotificationSettingsEditScreenViewStateBindings()
         self.chatType = chatType
         self.userSession = userSession
-        self.notificationSettingsProxy = notificationSettingsProxy
+        notificationSettingsProxy = userSession.clientProxy.notificationSettings
         roomSummaryProvider = userSession.clientProxy.roomSummaryProvider
         
         super.init(initialViewState: NotificationSettingsEditScreenViewState(bindings: bindings,

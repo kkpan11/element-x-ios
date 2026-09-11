@@ -1,7 +1,8 @@
 //
-// Copyright 2021-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2021-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -10,7 +11,7 @@ import SwiftUI
 
 /// A prompt that asks the user whether they would like to enable Analytics or not.
 struct AnalyticsPromptScreen: View {
-    @ObservedObject var context: AnalyticsPromptScreenViewModel.Context
+    let context: AnalyticsPromptScreenViewModel.Context
     
     var body: some View {
         FullscreenDialog(topPadding: UIConstants.startScreenBreakerScreenTopPadding, background: .gradient) {
@@ -62,8 +63,7 @@ struct AnalyticsPromptScreen: View {
         .frame(maxWidth: .infinity)
         .environment(\.backgroundStyle, AnyShapeStyle(.compound.bgSubtleSecondary))
     }
-
-    @ViewBuilder
+    
     private func checkMarkItem(title: String, position: ListPosition) -> some View {
         VisualListItem(title: title, position: position) {
             CompoundIcon(\.checkCircle, size: .small, relativeTo: .body)
@@ -102,6 +102,6 @@ struct AnalyticsPromptScreen_Previews: PreviewProvider, TestablePreview {
     }
     
     static func makeViewModel(showTerms: Bool = true) -> AnalyticsPromptScreenViewModel {
-        AnalyticsPromptScreenViewModel(termsURL: showTerms ? ServiceLocator.shared.settings.analyticsTermsURL : nil)
+        AnalyticsPromptScreenViewModel(termsURL: showTerms ? AppSettings.volatile().analyticsTermsURL : nil)
     }
 }

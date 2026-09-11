@@ -1,7 +1,8 @@
 //
-// Copyright 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2024-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -10,19 +11,12 @@ import SwiftUI
 struct RoomListFilterView: View {
     let filter: RoomListFilter
     @Binding var isActive: Bool
-
+    
     var body: some View {
         Toggle(isOn: $isActive) {
             Text(filter.localizedName)
         }
         .toggleStyle(FilterToggleStyle())
-    }
-}
-
-struct RoomListFilterView_Previews: PreviewProvider, TestablePreview {
-    static var previews: some View {
-        RoomListFilterView(filter: .people, isActive: .constant(false))
-        RoomListFilterView(filter: .people, isActive: .constant(true))
     }
 }
 
@@ -42,10 +36,10 @@ private struct FilterToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         let shape = RoundedRectangle(cornerRadius: 20)
         configuration.label
-            .font(.compound.bodyLG)
+            .font(.compound.bodyMD)
             .foregroundColor(foregroundColor(isOn: configuration.isOn))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
             .background(shape.fill(backgroundColor(isOn: configuration.isOn)))
             .overlay {
                 shape
@@ -57,5 +51,14 @@ private struct FilterToggleStyle: ToggleStyle {
             .onTapGesture {
                 configuration.isOn.toggle()
             }
+    }
+}
+
+// MARK: - Previews
+
+struct RoomListFilterView_Previews: PreviewProvider, TestablePreview {
+    static var previews: some View {
+        RoomListFilterView(filter: .people, isActive: .constant(false))
+        RoomListFilterView(filter: .people, isActive: .constant(true))
     }
 }

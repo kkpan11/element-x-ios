@@ -1,7 +1,8 @@
 //
-// Copyright 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2024-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,7 +10,6 @@ import OrderedCollections
 import SFSafeSymbols
 import SwiftUI
 
-@MainActor
 struct TimelineItemMenuActions {
     let reactions: [TimelineItemMenuReaction]
     let actions: [TimelineItemMenuAction]
@@ -47,8 +47,8 @@ struct TimelineItemMenuReaction: Hashable {
     let key: String
     let symbol: SFSymbol
     
-    // Frequently used emojis on the all use the same .heart SFSymbol.
-    // Override equatable so we can remove duplicates.
+    /// Frequently used emojis on the all use the same .heart SFSymbol.
+    /// Override equatable so we can remove duplicates.
     static func == (lhs: TimelineItemMenuReaction, rhs: TimelineItemMenuReaction) -> Bool {
         lhs.key == rhs.key
     }
@@ -56,6 +56,7 @@ struct TimelineItemMenuReaction: Hashable {
 
 enum TimelineItemMenuAction: Identifiable, Hashable {
     case copy
+    case translate
     case copyCaption
     case edit
     case addCaption
@@ -63,9 +64,11 @@ enum TimelineItemMenuAction: Identifiable, Hashable {
     case removeCaption
     case editPoll
     case copyPermalink
-    case redact
+    case redact(isMedia: Bool)
     case reply(isThread: Bool)
+    case replyInThread
     case forward(itemID: TimelineItemIdentifier)
+    case selectMessages
     case viewSource
     case report
     case react
@@ -74,10 +77,11 @@ enum TimelineItemMenuAction: Identifiable, Hashable {
     case pin
     case unpin
     case viewInRoomTimeline
-    case share
-    case save
+    case downloadMedia
     
-    var id: Self { self }
+    var id: Self {
+        self
+    }
     
     /// Whether the item should cancel a reply/edit occurring in the composer.
     var switchToDefaultComposer: Bool {
@@ -130,7 +134,7 @@ enum TimelineItemMenuAction: Identifiable, Hashable {
     
     var canAppearInMediaDetails: Bool {
         switch self {
-        case .viewInRoomTimeline, .share, .save, .redact:
+        case .viewInRoomTimeline, .downloadMedia, .redact, .forward:
             true
         default:
             false
@@ -143,10 +147,13 @@ enum TimelineItemMenuAction: Identifiable, Hashable {
         switch self {
         case .copy:
             Label(L10n.actionCopyText, icon: \.copy)
+        case .translate:
+            Label(L10n.actionTranslate, icon: \.translate)
         case .copyCaption:
             Label(L10n.actionCopyCaption, icon: \.copy)
         case .edit:
             Label(L10n.actionEdit, icon: \.edit)
+                .accessibilityIdentifier(A11yIdentifiers.roomScreen.timelineItemActionMenuAction.edit)
         case .addCaption:
             Label(L10n.actionAddCaption, icon: \.edit)
         case .editCaption:
@@ -159,10 +166,14 @@ enum TimelineItemMenuAction: Identifiable, Hashable {
             Label(L10n.actionCopyLinkToMessage, icon: \.link)
         case .reply(let isThread):
             Label(isThread ? L10n.actionReplyInThread : L10n.actionReply, icon: \.reply)
+        case .replyInThread:
+            Label(L10n.actionReplyInThread, icon: \.threads)
         case .forward:
             Label(L10n.actionForward, icon: \.forward)
-        case .redact:
-            Label(L10n.actionRemoveMessage, icon: \.delete)
+        case .selectMessages:
+            Label(L10n.actionSelect, icon: \.check)
+        case .redact(let isMedia):
+            Label(isMedia ? L10n.actionDeleteFile : L10n.actionRemoveMessage, icon: \.delete)
         case .viewSource:
             Label(L10n.actionViewSource, icon: \.code)
         case .report:
@@ -180,10 +191,8 @@ enum TimelineItemMenuAction: Identifiable, Hashable {
             Label(L10n.actionUnpin, icon: \.unpin)
         case .viewInRoomTimeline:
             Label(L10n.actionViewInTimeline, icon: \.visibilityOn)
-        case .share:
-            Label(L10n.actionShare, icon: \.shareIos)
-        case .save:
-            Label(L10n.actionSave, icon: \.downloadIos)
+        case .downloadMedia:
+            Label(L10n.actionDownload, icon: \.downloadIos)
         }
     }
 }

@@ -1,48 +1,49 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
+import Compound
 import SwiftUI
 
 struct RoomChangeRolesScreenSelectedItem: View {
     let member: RoomMemberDetails
     let mediaProvider: MediaProviderProtocol?
-    let dismissAction: () -> Void
+    let dismissAction: (() -> Void)?
     
     var body: some View {
         VStack(spacing: 4) {
-            avatar
+            if let dismissAction {
+                avatar.overlayRemoveItemButton(action: dismissAction)
+            } else {
+                avatar
+            }
             
             Text(member.name ?? member.id)
                 .font(.compound.bodyMD)
                 .foregroundColor(.compound.textPrimary)
                 .lineLimit(1)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityActions {
+            if let dismissAction {
+                Button(L10n.actionDismiss) {
+                    dismissAction()
+                }
+            }
+        }
     }
-    
-    // MARK: - Private
     
     var avatar: some View {
         LoadableAvatarImage(url: member.avatarURL,
                             name: member.name,
                             contentID: member.id,
-                            avatarSize: .user(on: .inviteUsers),
+                            avatarSize: .user(on: .roomChangeRoles),
                             mediaProvider: mediaProvider)
-            .overlay(alignment: .topTrailing) {
-                if member.role != .administrator {
-                    Button(action: dismissAction) {
-                        Image(systemName: "xmark.circle.fill")
-                            .resizable()
-                            .scaledFrame(size: 20)
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(Color.compound.iconOnSolidPrimary, Color.compound.iconPrimary)
-                    }
-                    .offset(x: 4)
-                }
-            }
+            .accessibilityHidden(true)
     }
 }
 
@@ -60,7 +61,7 @@ struct RoomChangeRolesScreenSelectedItem_Previews: PreviewProvider, TestablePrev
         HStack(spacing: 12) {
             ForEach(members, id: \.id) { member in
                 RoomChangeRolesScreenSelectedItem(member: member,
-                                                  mediaProvider: MediaProviderMock(configuration: .init())) { }
+                                                  mediaProvider: MediaProviderMock(.init())) { }
                     .frame(width: 72)
             }
         }

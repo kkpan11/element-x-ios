@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -10,7 +11,7 @@ import Compound
 import SwiftUI
 
 struct SecureBackupRecoveryKeyScreen: View {
-    @ObservedObject var context: SecureBackupRecoveryKeyScreenViewModel.Context
+    @Bindable var context: SecureBackupRecoveryKeyScreenViewModel.Context
     @FocusState private var focused
     private let textFieldIdentifier = "textFieldIdentifier"
     
@@ -34,7 +35,6 @@ struct SecureBackupRecoveryKeyScreen: View {
         .alert(item: $context.alertInfo)
     }
     
-    @ViewBuilder
     private var mainContent: some View {
         VStack(spacing: 48) {
             switch context.viewState.mode {
@@ -177,7 +177,6 @@ struct SecureBackupRecoveryKeyScreen: View {
         context.viewState.mode == .setupRecovery ? L10n.screenRecoveryKeySetupGenerateKey : L10n.screenRecoveryKeyChangeGenerateKey
     }
     
-    @ViewBuilder
     private var confirmRecoveryKeySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(L10n.commonRecoveryKey)
@@ -238,6 +237,7 @@ private struct RecoveryKeyView: View {
 
 // MARK: - Previews
 
+@available(iOS 26.0, *)
 struct SecureBackupRecoveryKeyScreen_Previews: PreviewProvider, TestablePreview {
     static let key = "EsTM njec uHYA yHmh dQdW Nj4o bNRU 9jMN XGMc KUNM UFr5 R8GY"
     static let notSetUpViewModel = viewModel(recoveryState: .disabled)
@@ -247,30 +247,28 @@ struct SecureBackupRecoveryKeyScreen_Previews: PreviewProvider, TestablePreview 
     static let unknownViewModel = viewModel(recoveryState: .unknown)
     
     static var previews: some View {
-        NavigationStack {
+        ElementNavigationStack {
             SecureBackupRecoveryKeyScreen(context: notSetUpViewModel.context)
         }
         .previewDisplayName("Not set up")
         
-        NavigationStack {
+        ElementNavigationStack {
             SecureBackupRecoveryKeyScreen(context: generatingViewModel.context)
         }
         .previewDisplayName("Generating")
         
-        NavigationStack {
+        ElementNavigationStack {
             SecureBackupRecoveryKeyScreen(context: setupViewModel.context)
         }
-        .snapshotPreferences(expect: setupViewModel.context.$viewState.map { state in
-            state.recoveryKey != nil
-        })
+        .snapshotPreferences(expect: setupViewModel.context.observe(\.viewState.recoveryKey).map { $0 != nil })
         .previewDisplayName("Set up")
         
-        NavigationStack {
+        ElementNavigationStack {
             SecureBackupRecoveryKeyScreen(context: incompleteViewModel.context)
         }
         .previewDisplayName("Incomplete")
         
-        NavigationStack {
+        ElementNavigationStack {
             SecureBackupRecoveryKeyScreen(context: unknownViewModel.context)
         }
         .previewDisplayName("Unknown")
@@ -278,12 +276,12 @@ struct SecureBackupRecoveryKeyScreen_Previews: PreviewProvider, TestablePreview 
     
     static func viewModel(recoveryState: SecureBackupRecoveryState, generateKey: Bool = false, key: String? = nil) -> SecureBackupRecoveryKeyScreenViewModelType {
         let backupController = SecureBackupControllerMock()
-        backupController.underlyingRecoveryState = CurrentValueSubject<SecureBackupRecoveryState, Never>(recoveryState).asCurrentValuePublisher()
+        backupController.recoveryState = CurrentValueSubject<SecureBackupRecoveryState, Never>(recoveryState).asCurrentValuePublisher()
         
         if let key {
-            backupController.generateRecoveryKeyReturnValue = .success(key)
+            backupController.generateRecoveryKeyWithPassphraseReturnValue = .success(key)
         } else {
-            backupController.generateRecoveryKeyClosure = {
+            backupController.generateRecoveryKeyWithPassphraseClosure = { _ in
                 try? await Task.sleep(for: .seconds(1000))
                 return .success("youshouldntseeme")
             }

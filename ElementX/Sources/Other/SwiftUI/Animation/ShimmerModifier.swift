@@ -1,7 +1,8 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -67,17 +68,10 @@ struct ShimmerModifier: ViewModifier {
 }
 
 struct ShimmerOverlay_Previews: PreviewProvider, TestablePreview {
-    static let viewModel = HomeScreenViewModel(userSession: UserSessionMock(.init(clientProxy: ClientProxyMock(.init(userID: "")))),
-                                               selectedRoomPublisher: CurrentValueSubject<String?, Never>(nil).asCurrentValuePublisher(),
-                                               appSettings: ServiceLocator.shared.settings,
-                                               analyticsService: ServiceLocator.shared.analytics,
-                                               notificationManager: NotificationManagerMock(),
-                                               userIndicatorController: ServiceLocator.shared.userIndicatorController)
-    
     static var previews: some View {
         VStack(spacing: 0) {
             ForEach(0...8, id: \.self) { _ in
-                HomeScreenRoomCell(room: .placeholder(), context: viewModel.context, isSelected: false)
+                HomeScreenRoomCell(room: .placeholder(), isSelected: false, mediaProvider: MediaProviderMock(.init())) { _ in }
             }
         }
         .redacted(reason: .placeholder)

@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -19,14 +20,14 @@ class AppCoordinatorStateMachine {
         case softLogout
         /// Opening an existing session.
         case restoringSession
-                
+        
         /// User session started
         case signedIn
-
+        
         /// Processing a sign out request
         case signingOut(isSoft: Bool, disableAppLock: Bool)
     }
-
+    
     /// Events that can be triggered on the AppCoordinator state machine
     enum Event: EventType {
         /// Start the `AppCoordinator` by showing authentication.
@@ -40,7 +41,7 @@ class AppCoordinatorStateMachine {
         
         /// A session has been created.
         case createdUserSession
-                
+        
         /// Request sign out.
         case signOut(isSoft: Bool, disableAppLock: Bool)
         /// Request the soft logout screen.
@@ -62,7 +63,7 @@ class AppCoordinatorStateMachine {
         stateMachine = StateMachine(state: .initial)
         configure()
     }
-
+    
     private func configure() {
         stateMachine.addRoutes(event: .startWithAuthentication, transitions: [.initial => .signedOut])
         stateMachine.addRoutes(event: .createdUserSession, transitions: [.signedOut => .signedIn,
@@ -70,13 +71,13 @@ class AppCoordinatorStateMachine {
         stateMachine.addRoutes(event: .startWithExistingSession, transitions: [.initial => .restoringSession])
         stateMachine.addRoutes(event: .createdUserSession, transitions: [.restoringSession => .signedIn])
         stateMachine.addRoutes(event: .failedRestoringSession, transitions: [.restoringSession => .signedOut])
-                
+        
         stateMachine.addRoutes(event: .completedSigningOut, transitions: [.signingOut(isSoft: false, disableAppLock: false) => .signedOut,
                                                                           .signingOut(isSoft: false, disableAppLock: true) => .signedOut])
         stateMachine.addRoutes(event: .showSoftLogout, transitions: [.signingOut(isSoft: true, disableAppLock: false) => .softLogout])
         
         stateMachine.addRoutes(event: .clearCache, transitions: [.signedIn => .initial])
-
+        
         // Transitions with associated values need to be handled through `addRouteMapping`
         stateMachine.addRouteMapping { event, fromState, _ in
             switch (fromState, event) {
@@ -86,7 +87,7 @@ class AppCoordinatorStateMachine {
                 return nil
             }
         }
-
+        
         addTransitionHandler { context in
             if let event = context.event {
                 MXLog.info("Transitioning from `\(context.fromState)` to `\(context.toState)` with event `\(event)`")

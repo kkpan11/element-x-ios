@@ -1,27 +1,29 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Foundation
 import MatrixRustSDK
 
-struct RoomMemberDetails: Identifiable, Hashable {
+nonisolated struct RoomMemberDetails: Identifiable, Hashable {
     let id: String
     let name: String?
     let avatarURL: URL?
+    let status: UserStatus
+    
     let permalink: URL?
     
     var isInvited: Bool
     var isIgnored: Bool
     var isBanned: Bool
     var isActive: Bool
-        
-    enum Role { case administrator, moderator, user }
-    let role: Role
-    let powerLevel: Int
+    
+    let role: RoomRole
+    let powerLevel: RoomPowerLevel
     
     func matches(searchQuery: String) -> Bool {
         guard !searchQuery.isEmpty else { return true }
@@ -29,27 +31,18 @@ struct RoomMemberDetails: Identifiable, Hashable {
     }
 }
 
-extension RoomMemberDetails {
+nonisolated extension RoomMemberDetails {
     init(withProxy proxy: RoomMemberProxyProtocol) {
         id = proxy.userID
         name = proxy.displayName
         avatarURL = proxy.avatarURL
+        status = proxy.status
         permalink = proxy.permalink
         isActive = proxy.isActive
         isInvited = proxy.membership == .invite
         isIgnored = proxy.isIgnored
         isBanned = proxy.membership == .ban
-        role = .init(proxy.role)
+        role = proxy.role
         powerLevel = proxy.powerLevel
-    }
-}
-
-extension RoomMemberDetails.Role {
-    init(_ role: RoomMemberRole) {
-        self = switch role {
-        case .administrator: .administrator
-        case .moderator: .moderator
-        case .user: .user
-        }
     }
 }

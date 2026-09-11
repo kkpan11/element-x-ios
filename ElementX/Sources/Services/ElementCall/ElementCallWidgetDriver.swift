@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -35,6 +36,7 @@ struct ElementCallWidgetMessage: Codable {
     let action: Action
     var data: Data = .init()
     
+    // periphery:ignore - part of the encoded payload
     let widgetId: String
     var requestId = "widgetapi-\(UUID())"
     
@@ -47,7 +49,7 @@ struct ElementCallWidgetMessage: Codable {
     }
 }
 
-class ElementCallWidgetDriver: WidgetCapabilitiesProvider, ElementCallWidgetDriverProtocol {
+final class ElementCallWidgetDriver: WidgetCapabilitiesProvider, ElementCallWidgetDriverProtocol {
     private let room: RoomProtocol
     private let deviceID: String
     
@@ -69,42 +71,39 @@ class ElementCallWidgetDriver: WidgetCapabilitiesProvider, ElementCallWidgetDriv
     func start(baseURL: URL,
                clientID: String,
                colorScheme: ColorScheme,
+               voiceOnly: Bool,
                rageshakeURL: String?,
                analyticsConfiguration: ElementCallAnalyticsConfiguration?) async -> Result<URL, ElementCallWidgetDriverError> {
         guard let room = room as? Room else {
             return .failure(.roomInvalid)
         }
         
-        let useEncryption = await (try? room.latestEncryptionState() == .encrypted) ?? false
-        let widgetSettings: WidgetSettings
+        async let useEncryption = (try? room.latestEncryptionState() == .encrypted) ?? false
+        async let intent = room.joinCallIntent(voiceOnly: voiceOnly)
         
+        let widgetSettings: WidgetSettings
         do {
-            widgetSettings = try newVirtualElementCallWidget(props: .init(elementCallUrl: baseURL.absoluteString,
-                                                                          widgetId: widgetID,
-                                                                          parentUrl: nil,
-                                                                          hideHeader: nil,
-                                                                          preload: nil,
-                                                                          fontScale: nil,
-                                                                          appPrompt: false,
-                                                                          confineToRoom: true,
-                                                                          font: nil,
-                                                                          encryption: useEncryption ? .perParticipantKeys : .unencrypted,
-                                                                          intent: .startCall,
-                                                                          hideScreensharing: false,
-                                                                          posthogUserId: nil,
-                                                                          posthogApiHost: analyticsConfiguration?.posthogAPIHost,
-                                                                          posthogApiKey: analyticsConfiguration?.posthogAPIKey,
-                                                                          rageshakeSubmitUrl: rageshakeURL,
-                                                                          sentryDsn: analyticsConfiguration?.sentryDSN,
-                                                                          sentryEnvironment: nil,
-                                                                          controlledMediaDevices: !ProcessInfo.processInfo.isiOSAppOnMac))
+            widgetSettings = try await newVirtualElementCallWidget(props: .init(elementCallUrl: baseURL.absoluteString,
+                                                                                widgetId: widgetID,
+                                                                                parentUrl: nil,
+                                                                                fontScale: nil,
+                                                                                font: nil,
+                                                                                encryption: useEncryption ? .perParticipantKeys : .unencrypted,
+                                                                                posthogUserId: nil,
+                                                                                posthogApiHost: analyticsConfiguration?.posthogAPIHost,
+                                                                                posthogApiKey: analyticsConfiguration?.posthogAPIKey,
+                                                                                rageshakeSubmitUrl: rageshakeURL,
+                                                                                sentryDsn: analyticsConfiguration?.sentryDSN,
+                                                                                
+                                                                                sentryEnvironment: nil),
+                                                                   config: .init(intent: intent))
         } catch {
             MXLog.error("Failed to build widget settings: \(error)")
             return .failure(.failedBuildingWidgetSettings)
         }
         
         let languageTag = "\(Locale.current.language.languageCode ?? "en")-\(Locale.current.language.region ?? "US")"
-        let theme = colorScheme == .light ? "light" : "dark"
+        let theme = "dark"
         
         let urlString: String
         do {
@@ -131,7 +130,7 @@ class ElementCallWidgetDriver: WidgetCapabilitiesProvider, ElementCallWidgetDriv
         
         self.widgetDriver = widgetDriver
         
-        Task.detached { [weak self, widgetDriver, messagePublisher] in
+        Task.detached { [weak self, widgetDriver] in
             MXLog.debug("Started message receiving loop")
             
             defer {
@@ -143,10 +142,9 @@ class ElementCallWidgetDriver: WidgetCapabilitiesProvider, ElementCallWidgetDriv
                     return
                 }
                 
-                messagePublisher.send(receivedMessage)
                 MXLog.debug("Received message: \(receivedMessage)")
                 
-                self?.handleMessageIfNeeded(receivedMessage)
+                await self?.receiveMessage(receivedMessage)
             }
         }
         
@@ -163,6 +161,7 @@ class ElementCallWidgetDriver: WidgetCapabilitiesProvider, ElementCallWidgetDriv
         return .success(url)
     }
     
+    @discardableResult
     func handleMessage(_ message: String) async -> Result<Bool, ElementCallWidgetDriverError> {
         guard let widgetDriver else {
             return .failure(.driverNotSetup)
@@ -178,11 +177,17 @@ class ElementCallWidgetDriver: WidgetCapabilitiesProvider, ElementCallWidgetDriv
     
     // MARK: - WidgetCapabilitiesProvider
     
-    func acquireCapabilities(capabilities: WidgetCapabilities) -> WidgetCapabilities {
+    /// Called by the SDK from arbitrary threads, only touches Sendable state.
+    nonisolated func acquireCapabilities(capabilities: WidgetCapabilities) -> WidgetCapabilities {
         getElementCallRequiredPermissions(ownUserId: room.ownUserId(), ownDeviceId: deviceID)
     }
     
     // MARK: - Private
+    
+    private func receiveMessage(_ message: String) {
+        messagePublisher.send(message)
+        handleMessageIfNeeded(message)
+    }
     
     func handleMessageIfNeeded(_ message: String) {
         guard let data = message.data(using: .utf8) else {

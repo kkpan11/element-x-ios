@@ -1,7 +1,8 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -11,24 +12,39 @@ import LocalAuthentication
 /// It works as the actual context does and won't update the return values of `biometryType` and
 /// `evaluatedPolicyDomainStateValue` until either `canEvaluatePolicy` or
 /// `evaluatePolicy` have been called.
-class LAContextMock: LAContext {
+nonisolated class LAContextMock: LAContext {
     var biometryTypeValue: LABiometryType!
     private var internalBiometryTypeValue: LABiometryType!
-    override var biometryType: LABiometryType { internalBiometryTypeValue }
+    override var biometryType: LABiometryType {
+        internalBiometryTypeValue
+    }
     
     var evaluatedPolicyDomainStateValue: Data?
     private var internalEvaluatedPolicyDomainStateValue: Data?
-    override var evaluatedPolicyDomainState: Data? { internalEvaluatedPolicyDomainStateValue }
+    override var evaluatedPolicyDomainState: Data? {
+        internalEvaluatedPolicyDomainStateValue
+    }
     
+    var canEvaluatePolicyReturnValue: Bool?
     override func canEvaluatePolicy(_ policy: LAPolicy, error: NSErrorPointer) -> Bool {
-        let result = super.canEvaluatePolicy(policy, error: error)
+        let result = canEvaluatePolicyReturnValue ?? super.canEvaluatePolicy(policy, error: error)
         updateInternalValues()
         return result
     }
     
     var evaluatePolicyReturnValue: Bool!
+    var evaluatePolicyThrowableError: Error?
+    var evaluatePolicyCallsCount = 0
+    var evaluatePolicyCalled: Bool {
+        evaluatePolicyCallsCount > 0
+    }
+    
     override func evaluatePolicy(_ policy: LAPolicy, localizedReason: String) async throws -> Bool {
+        evaluatePolicyCallsCount += 1
         updateInternalValues()
+        if let evaluatePolicyThrowableError {
+            throw evaluatePolicyThrowableError
+        }
         return evaluatePolicyReturnValue
     }
     

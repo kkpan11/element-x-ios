@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -22,9 +23,10 @@ final class DeveloperOptionsScreenCoordinator: CoordinatorProtocol {
         actionsSubject.eraseToAnyPublisher()
     }
     
-    init() {
-        viewModel = DeveloperOptionsScreenViewModel(developerOptions: ServiceLocator.shared.settings,
-                                                    elementCallBaseURL: ServiceLocator.shared.settings.elementCallBaseURL)
+    init(appSettings: AppSettings, appHooks: AppHooks, clientProxy: ClientProxyProtocol?) {
+        viewModel = DeveloperOptionsScreenViewModel(developerOptions: appSettings,
+                                                    appHooks: appHooks,
+                                                    clientProxy: clientProxy)
         
         viewModel.actions
             .sink { [weak self] action in

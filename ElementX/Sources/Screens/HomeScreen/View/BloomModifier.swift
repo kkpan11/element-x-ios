@@ -1,31 +1,67 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Compound
+import Foundation
 import SwiftUI
 import SwiftUIIntrospect
 
 extension View {
-    // Note: The dependency on HomeScreenViewModel.Context will be removed in the next iteration.
-    @ViewBuilder
-    func bloom(context: HomeScreenViewModel.Context, scrollViewAdapter: ScrollViewAdapter, isNewBloomEnabled: Bool) -> some View {
-        if isNewBloomEnabled {
-            modifier(NewBloomModifier())
+    /// Adds a bloom behind the navigation bar.
+    /// - Parameter hasSearchBar: Whether or not the navigation bar contains a search bar (so that
+    /// the bloom can be sized appropriately).
+    @ViewBuilder func toolbarBloom(hasSearchBar: Bool) -> some View {
+        if #available(iOS 26, *) {
+            modifier(BloomModifier(hasSearchBar: hasSearchBar))
         } else {
-            modifier(BloomModifier(context: context, scrollViewAdapter: scrollViewAdapter))
+            modifier(OldBloomModifier(hasSearchBar: hasSearchBar))
         }
     }
 }
 
-struct NewBloomModifier: ViewModifier {
+private struct BloomModifier: ViewModifier {
+    let hasSearchBar: Bool
+    
+    @State private var height = CGFloat.zero
+    
+    private var endPointY: CGFloat {
+        hasSearchBar ? 0.35 : 0.55
+    }
+    
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.safeAreaInsets.top
+            } action: { height in
+                self.height = height
+            }
+            .overlay(alignment: .top) {
+                LinearGradient(gradient: .compound.subtle,
+                               startPoint: .top,
+                               endPoint: .init(x: 0.5, y: endPointY))
+                    .ignoresSafeArea(edges: .all)
+                    .frame(height: height)
+                    .allowsHitTesting(false)
+                    // Does not render properly on dark themes otherwise
+                    .colorScheme(.light)
+            }
+    }
+}
+
+private struct OldBloomModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    
+    let hasSearchBar: Bool
+    
     @State private var standardAppearance = UINavigationBarAppearance()
     @State private var scrollEdgeAppearance = UINavigationBarAppearance()
     
-    @State private var bloomGradientImage: UIImage?
+    @State private var bloom = Bloom()
     
     func body(content: Content) -> some View {
         content
@@ -33,179 +69,93 @@ struct NewBloomModifier: ViewModifier {
     }
     
     private func configureBloom(controller: UIViewController) {
-        guard controller.navigationItem.standardAppearance != standardAppearance,
-              controller.navigationItem.scrollEdgeAppearance != scrollEdgeAppearance else {
+        if controller.navigationItem.standardAppearance == standardAppearance,
+           controller.navigationItem.scrollEdgeAppearance == scrollEdgeAppearance,
+           canUse(bloom) {
             return
         }
         
-        let image = makeBloomImage()
+        let bloom = makeBloom()
         
         standardAppearance.configureWithDefaultBackground()
-        standardAppearance.backgroundImage = image
+        standardAppearance.backgroundImage = bloom.image
         standardAppearance.backgroundImageContentMode = .scaleToFill
         controller.navigationItem.standardAppearance = standardAppearance
         
         scrollEdgeAppearance.configureWithTransparentBackground()
-        scrollEdgeAppearance.backgroundImage = image
+        scrollEdgeAppearance.backgroundImage = bloom.image
         scrollEdgeAppearance.backgroundImageContentMode = .scaleToFill
         scrollEdgeAppearance.backgroundColor = .compound.bgCanvasDefault
         controller.navigationItem.scrollEdgeAppearance = scrollEdgeAppearance
     }
     
-    private func makeBloomImage() -> UIImage? {
-        if let bloomGradientImage {
-            return bloomGradientImage
+    private func makeBloom() -> Bloom {
+        if bloom.image != nil, canUse(bloom) {
+            return bloom
         }
         
-        let newImage = ImageRenderer(content: bloomGradient).uiImage
-        Task { bloomGradientImage = newImage }
-        return newImage
+        // There's a bug somewhere when rendering in dark mode (which we've mistakenly not been doing)
+        // which results in the first 5 stops not having any alpha, only the last one…
+        let newImage = ImageRenderer(content: bloomGradient /* .colorScheme(colorScheme) */ ).uiImage
+        
+        bloom.image = newImage
+        bloom.colorScheme = colorScheme
+        bloom.baseColor = .compound.gradientSubtleStop1
+        return bloom
+    }
+    
+    private var endPointY: CGFloat {
+        hasSearchBar ? 0.5 : 0.7
     }
     
     private var bloomGradient: some View {
-        LinearGradient(colors: [.compound._bgOwnPill, .clear], // This isn't the final gradient.
+        LinearGradient(gradient: .compound.subtle,
                        startPoint: .top,
-                       endPoint: .init(x: 0.5, y: 0.7))
+                       endPoint: .init(x: 0.5, y: endPointY))
             .ignoresSafeArea(edges: .all)
             .frame(width: 256, height: 256)
     }
-}
-
-struct BloomModifier: ViewModifier {
-    @ObservedObject var context: HomeScreenViewModel.Context
     
-    let scrollViewAdapter: ScrollViewAdapter
-    
-    // Bloom components
-    @State private var bloomView: UIView?
-    @State private var leftBarButtonView: UIView?
-    @State private var gradientView: UIView?
-    @State private var navigationBarContainer: UIView?
-    @State private var hairlineView: UIView?
-    
-    func body(content: Content) -> some View {
-        content
-            .introspect(.viewController, on: .supportedVersions) { controller in
-                Task {
-                    if bloomView == nil {
-                        makeBloomView(controller: controller)
-                    }
-                }
-                let isTopController = controller.navigationController?.topViewController != controller
-                let isHidden = isTopController || context.isSearchFieldFocused
-                if let bloomView {
-                    bloomView.isHidden = isHidden
-                    UIView.transition(with: bloomView, duration: 1.75, options: .curveEaseInOut) {
-                        bloomView.alpha = isTopController ? 0 : 1
-                    }
-                }
-                gradientView?.isHidden = isHidden
-                navigationBarContainer?.clipsToBounds = !isHidden
-                hairlineView?.isHidden = isHidden || !scrollViewAdapter.isAtTopEdge.value
-                if !isHidden {
-                    updateBloomCenter()
-                }
-            }
-            .onReceive(scrollViewAdapter.isAtTopEdge.removeDuplicates()) { value in
-                hairlineView?.isHidden = !value
-                guard let gradientView else {
-                    return
-                }
-                if value {
-                    UIView.transition(with: gradientView, duration: 0.3, options: .curveEaseIn) {
-                        gradientView.alpha = 0
-                    }
-                } else {
-                    gradientView.alpha = 1
-                }
-            }
+    private func canUse(_ bloom: Bloom) -> Bool {
+        // Don't check for a nil image in here, there's no point re-rendering over and over if the render fails.
+        bloom.colorScheme == colorScheme && bloom.baseColor == .compound.gradientSubtleStop1
     }
     
-    private var bloomGradient: some View {
-        LinearGradient(colors: [.clear, .compound.bgCanvasDefault], startPoint: .top, endPoint: .bottom)
-            .mask {
-                LinearGradient(stops: [.init(color: .white, location: 0.75), .init(color: .clear, location: 1.0)],
-                               startPoint: .leading,
-                               endPoint: .trailing)
-            }
-            .ignoresSafeArea(edges: .all)
-    }
-            
-    private func makeBloomView(controller: UIViewController) {
-        guard let navigationBarContainer = controller.navigationController?.navigationBar.subviews.first,
-              let leftBarButtonView = controller.navigationItem.leadingItemGroups.first?.barButtonItems.first?.customView else {
-            return
-        }
-        
-        let bloomController = UIHostingController(rootView: bloom)
-        bloomController.view.translatesAutoresizingMaskIntoConstraints = true
-        bloomController.view.backgroundColor = .clear
-        navigationBarContainer.insertSubview(bloomController.view, at: 0)
-        self.leftBarButtonView = leftBarButtonView
-        bloomView = bloomController.view
-        self.navigationBarContainer = navigationBarContainer
-        updateBloomCenter()
-        
-        let gradientController = UIHostingController(rootView: bloomGradient)
-        gradientController.view.backgroundColor = .clear
-        gradientController.view.translatesAutoresizingMaskIntoConstraints = false
-        navigationBarContainer.insertSubview(gradientController.view, aboveSubview: bloomController.view)
-        
-        let constraints = [gradientController.view.bottomAnchor.constraint(equalTo: navigationBarContainer.bottomAnchor),
-                           gradientController.view.trailingAnchor.constraint(equalTo: navigationBarContainer.trailingAnchor),
-                           gradientController.view.leadingAnchor.constraint(equalTo: navigationBarContainer.leadingAnchor),
-                           gradientController.view.heightAnchor.constraint(equalToConstant: 40)]
-        constraints.forEach { $0.isActive = true }
-        gradientView = gradientController.view
-        
-        let dividerController = UIHostingController(rootView: Divider().ignoresSafeArea())
-        dividerController.view.translatesAutoresizingMaskIntoConstraints = false
-        navigationBarContainer.addSubview(dividerController.view)
-        let dividerConstraints = [dividerController.view.bottomAnchor.constraint(equalTo: gradientController.view.bottomAnchor),
-                                  dividerController.view.widthAnchor.constraint(equalTo: gradientController.view.widthAnchor),
-                                  dividerController.view.leadingAnchor.constraint(equalTo: gradientController.view.leadingAnchor)]
-        dividerConstraints.forEach { $0.isActive = true }
-        hairlineView = dividerController.view
-    }
-
-    private func updateBloomCenter() {
-        guard let leftBarButtonView,
-              let bloomView,
-              let navigationBarContainer = bloomView.superview else {
-            return
-        }
-        
-        let center = leftBarButtonView.convert(leftBarButtonView.center, to: navigationBarContainer.coordinateSpace)
-        bloomView.center = center
-    }
-    
-    private var bloom: some View {
-        BloomView(context: context)
+    /// This is a class to avoid a "Modifying state during view update" warning when storing
+    /// the result on the same run-loop - we want to avoid dispatching that to the next loop as
+    /// that can result in further (unnecessary) renders being made.
+    class Bloom {
+        var image: UIImage?
+        var colorScheme: ColorScheme?
+        var baseColor: Color?
     }
 }
 
-private struct BloomView: View {
-    @ObservedObject var context: HomeScreenViewModel.Context
-    @Environment(\.colorScheme) private var colorScheme
-    
-    var body: some View {
-        ZStack {
-            avatar
-                .blur(radius: 64)
-                .blendMode(colorScheme == .dark ? .exclusion : .hardLight)
-                .opacity(colorScheme == .dark ? 0.50 : 0.20)
-            avatar
-                .blur(radius: 64)
-                .blendMode(.color)
-                .opacity(colorScheme == .dark ? 0.20 : 0.80)
+// MARK: - Previews
+
+struct BloomModifier_Previews: PreviewProvider, TestablePreview {
+    static var previews: some View {
+        ElementNavigationStack {
+            mockScreen
+                .navigationTitle(L10n.screenRoomlistMainSpaceTitle)
+                .searchable(text: .constant(""), placement: .navigationBarDrawer(displayMode: .always))
+                .toolbarBloom(hasSearchBar: true)
         }
+        .previewDisplayName("Chats")
+        
+        ElementNavigationStack {
+            mockScreen
+                .navigationTitle(L10n.screenSpaceListTitle)
+                .toolbarBloom(hasSearchBar: false)
+        }
+        .previewDisplayName("Spaces")
     }
     
-    private var avatar: some View {
-        LoadableAvatarImage(url: context.viewState.userAvatarURL,
-                            name: context.viewState.userDisplayName,
-                            contentID: context.viewState.userID,
-                            avatarSize: .custom(256),
-                            mediaProvider: context.mediaProvider)
+    static var mockScreen: some View {
+        List { }
+            .toolbar {
+                Button { } label: { CompoundIcon(\.check) }
+                    .accessibilityLabel(L10n.actionConfirm) // Keep the a11y tests happy 😄
+            }
     }
 }

@@ -1,15 +1,17 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Compound
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct NotificationSettingsScreen: View {
-    @ObservedObject var context: NotificationSettingsScreenViewModel.Context
+    @Bindable var context: NotificationSettingsScreenViewModel.Context
     
     var body: some View {
         Form {
@@ -25,16 +27,12 @@ struct NotificationSettingsScreen: View {
                 if context.enableNotifications {
                     roomsNotificationSection
                     
-                    if context.viewState.settings?.roomMentionsEnabled != nil {
-                        mentionsSection
-                    }
-                    
                     if context.viewState.showCallsSettings, context.viewState.settings?.callsEnabled != nil {
                         callsSection
                     }
                     
-                    if context.viewState.settings?.invitationsEnabled != nil {
-                        additionalSettingsSection
+                    if context.viewState.customToneSelectionEnabled {
+                        soundSelectionSection
                     }
                 }
             }
@@ -66,6 +64,7 @@ struct NotificationSettingsScreen: View {
                 HStack(alignment: .firstTextBaseline, spacing: 13) {
                     Image(systemSymbol: .exclamationmarkCircleFill)
                         .foregroundColor(.compound.iconTertiaryAlpha)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(L10n.screenNotificationSettingsSystemNotificationsTurnedOff)
                             .font(.compound.bodyLG)
@@ -116,14 +115,16 @@ struct NotificationSettingsScreen: View {
                     .disabled(context.viewState.settings == nil)
                     .accessibilityIdentifier(A11yIdentifiers.roomDetailsScreen.notifications)
             
-        } header: {
-            Text(L10n.screenNotificationSettingsNotificationSectionTitle)
-                .compoundListSectionHeader()
-        }
-    }
-        
-    private var mentionsSection: some View {
-        Section {
+            // Invitations
+            ListRow(label: .plain(title: L10n.screenNotificationSettingsInviteForMeLabel),
+                    kind: .toggle($context.invitationsEnabled))
+                .disabled(context.viewState.settings?.invitationsEnabled == nil)
+                .allowsHitTesting(!context.viewState.applyingChange)
+                .onChange(of: context.invitationsEnabled) {
+                    context.send(viewAction: .invitationsChanged)
+                }
+            
+            // @room mentions
             ListRow(label: .plain(title: L10n.screenNotificationSettingsRoomMentionLabel),
                     kind: .toggle($context.roomMentionsEnabled))
                 .disabled(context.viewState.settings?.roomMentionsEnabled == nil)
@@ -131,8 +132,9 @@ struct NotificationSettingsScreen: View {
                 .onChange(of: context.roomMentionsEnabled) {
                     context.send(viewAction: .roomMentionChanged)
                 }
+            
         } header: {
-            Text(L10n.screenNotificationSettingsMentionsSectionTitle)
+            Text(L10n.screenNotificationSettingsNotificationSectionTitle)
                 .compoundListSectionHeader()
         }
     }
@@ -152,19 +154,64 @@ struct NotificationSettingsScreen: View {
         }
     }
     
-    private var additionalSettingsSection: some View {
+    @ViewBuilder
+    private var soundSelectionSection: some View {
         Section {
-            ListRow(label: .plain(title: L10n.screenNotificationSettingsInviteForMeLabel),
-                    kind: .toggle($context.invitationsEnabled))
-                .disabled(context.viewState.settings?.invitationsEnabled == nil)
-                .allowsHitTesting(!context.viewState.applyingChange)
-                .onChange(of: context.invitationsEnabled) {
-                    context.send(viewAction: .invitationsChanged)
-                }
+            DisclosureGroup(context.viewState.selectedAlertTone.label, isExpanded: $context.shouldShowAlertSounds) {
+                customSoundSelectionSection
+            }
+            .foregroundStyle(.compound.textPrimary)
+            .listRowBackground(Color.compound.bgCanvasDefaultLevel1)
+            .listRowSeparatorTint(ListRowColor.separatorTint)
         } header: {
-            Text(L10n.screenNotificationSettingsAdditionalSettingsSectionTitle)
+            Text(L10n.screenNotificationSettingsSoundSectionTitle)
                 .compoundListSectionHeader()
         }
+        
+        Section(isExpanded: $context.shouldShowAlertSounds) {
+            presetSoundSelectionSection
+        } header: { }
+    }
+    
+    private var presetSoundSelectionSection: some View {
+        ForEach(NotificationToneManager.allDefaultAlerts, id: \.filename) { alertTone in
+            ListRow(label: .plain(title: alertTone.label),
+                    kind: .selection(isSelected: context.viewState.selectedAlertTone == alertTone) {
+                        context.send(viewAction: .selectAlertTone(alertTone))
+                    })
+        }
+    }
+    
+    @ViewBuilder
+    private var customSoundSelectionSection: some View {
+        ForEach(context.viewState.availableCustomTones, id: \.filename) { alertTone in
+            ListRow(label: .plain(title: alertTone.label),
+                    kind: .selection(isSelected: context.viewState.selectedAlertTone == alertTone) {
+                        context.send(viewAction: .selectAlertTone(alertTone))
+                    })
+        }
+        .onDelete { indices in
+            let tones = indices.map {
+                context.viewState.availableCustomTones[$0]
+            }
+            
+            context.send(viewAction: .deleteCustomAlertTones(tones))
+        }
+        
+        ListRow(label: .plain(title: L10n.screenNotificationSettingsSoundCustomSoundButtonTitle),
+                kind: .button {
+                    context.shouldShowCustomAlertTonePicker = true
+                })
+                .fileImporter(isPresented: $context.shouldShowCustomAlertTonePicker,
+                              allowedContentTypes: [
+                                  .mp3,
+                                  .aiff,
+                                  .wav,
+                                  UTType("com.apple.m4a-audio"),
+                                  UTType("com.apple.coreaudio-format")
+                              ].compactMap(\.self)) {
+                    context.send(viewAction: .addedCustomAlertTone($0))
+                }
     }
     
     private var configurationMismatchSection: some View {
@@ -197,9 +244,10 @@ struct NotificationSettingsScreen: View {
 
 // MARK: - Previews
 
+@available(iOS 26.0, *)
 struct NotificationSettingsScreen_Previews: PreviewProvider, TestablePreview {
     static let viewModel: NotificationSettingsScreenViewModel = {
-        let appSettings = AppSettings()
+        let appSettings = AppSettings.volatile()
         let notificationCenter = UserNotificationCenterMock()
         notificationCenter.authorizationStatusReturnValue = .notDetermined
         let notificationSettingsProxy = NotificationSettingsProxyMock(with: .init())
@@ -213,19 +261,21 @@ struct NotificationSettingsScreen_Previews: PreviewProvider, TestablePreview {
         }
         notificationSettingsProxy.isRoomMentionEnabledReturnValue = true
         notificationSettingsProxy.isCallEnabledReturnValue = false
-
+        
         let userSession = UserSessionMock(.init(clientProxy: ClientProxyMock(.init(userID: "John Doe"))))
-
+        
         var viewModel = NotificationSettingsScreenViewModel(appSettings: appSettings,
                                                             userNotificationCenter: notificationCenter,
+                                                            notificationToneManager: NotificationToneManagerMock(.init()),
                                                             notificationSettingsProxy: notificationSettingsProxy,
+                                                            userIndicatorController: UserIndicatorControllerMock(),
                                                             isModallyPresented: true)
         viewModel.fetchInitialContent()
         return viewModel
     }()
     
     static let viewModelConfigurationMismatch: NotificationSettingsScreenViewModel = {
-        let appSettings = AppSettings()
+        let appSettings = AppSettings.volatile()
         let notificationCenter = UserNotificationCenterMock()
         notificationCenter.authorizationStatusReturnValue = .notDetermined
         let notificationSettingsProxy = NotificationSettingsProxyMock(with: .init())
@@ -243,25 +293,23 @@ struct NotificationSettingsScreen_Previews: PreviewProvider, TestablePreview {
         notificationSettingsProxy.isCallEnabledReturnValue = false
         
         let userSession = UserSessionMock(.init(clientProxy: ClientProxyMock(.init(userID: "John Doe"))))
-
+        
         var viewModel = NotificationSettingsScreenViewModel(appSettings: appSettings,
                                                             userNotificationCenter: notificationCenter,
+                                                            notificationToneManager: NotificationToneManagerMock(.init()),
                                                             notificationSettingsProxy: notificationSettingsProxy,
+                                                            userIndicatorController: UserIndicatorControllerMock(),
                                                             isModallyPresented: true)
         viewModel.fetchInitialContent()
         return viewModel
     }()
-
+    
     static var previews: some View {
         NotificationSettingsScreen(context: viewModel.context)
-            .snapshotPreferences(expect: viewModel.context.$viewState.map { state in
-                state.settings != nil
-            })
+            .snapshotPreferences(expect: viewModel.context.observe(\.viewState.settings).map { $0 != nil })
         
         NotificationSettingsScreen(context: viewModelConfigurationMismatch.context)
-            .snapshotPreferences(expect: viewModelConfigurationMismatch.context.$viewState.map { state in
-                state.settings != nil
-            })
+            .snapshotPreferences(expect: viewModelConfigurationMismatch.context.observe(\.viewState.settings).map { $0 != nil })
             .previewDisplayName("Configuration mismatch")
     }
 }

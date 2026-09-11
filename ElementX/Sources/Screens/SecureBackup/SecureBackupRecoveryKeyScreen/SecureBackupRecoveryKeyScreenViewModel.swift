@@ -1,14 +1,15 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
 import Combine
 import SwiftUI
 
-typealias SecureBackupRecoveryKeyScreenViewModelType = StateStoreViewModel<SecureBackupRecoveryKeyScreenViewState, SecureBackupRecoveryKeyScreenViewAction>
+typealias SecureBackupRecoveryKeyScreenViewModelType = StateStoreViewModelV2<SecureBackupRecoveryKeyScreenViewState, SecureBackupRecoveryKeyScreenViewAction>
 
 class SecureBackupRecoveryKeyScreenViewModel: SecureBackupRecoveryKeyScreenViewModelType, SecureBackupRecoveryKeyScreenViewModelProtocol {
     private let secureBackupController: SecureBackupControllerProtocol
@@ -18,7 +19,7 @@ class SecureBackupRecoveryKeyScreenViewModel: SecureBackupRecoveryKeyScreenViewM
     var actions: AnyPublisher<SecureBackupRecoveryKeyScreenViewModelAction, Never> {
         actionsSubject.eraseToAnyPublisher()
     }
-
+    
     init(secureBackupController: SecureBackupControllerProtocol,
          userIndicatorController: UserIndicatorControllerProtocol,
          isModallyPresented: Bool) {
@@ -40,7 +41,7 @@ class SecureBackupRecoveryKeyScreenViewModel: SecureBackupRecoveryKeyScreenViewM
             state.isGeneratingKey = true
             
             Task {
-                switch await secureBackupController.generateRecoveryKey() {
+                switch await secureBackupController.generateRecoveryKey(withPassphrase: nil) {
                 case .success(let key):
                     state.recoveryKey = key
                 case .failure(let error):
@@ -62,7 +63,7 @@ class SecureBackupRecoveryKeyScreenViewModel: SecureBackupRecoveryKeyScreenViewM
                 
                 switch await secureBackupController.confirmRecoveryKey(state.bindings.confirmationRecoveryKey) {
                 case .success:
-                    actionsSubject.send(.done(mode: context.viewState.mode))
+                    actionsSubject.send(.done(mode: state.mode))
                 case .failure(let error):
                     MXLog.error("Failed confirming recovery key with error: \(error)")
                     state.bindings.alertInfo = .init(id: .init(),
@@ -80,7 +81,7 @@ class SecureBackupRecoveryKeyScreenViewModel: SecureBackupRecoveryKeyScreenViewM
                                              message: L10n.screenRecoveryKeySetupConfirmationDescription,
                                              primaryButton: .init(title: L10n.actionContinue) { [weak self] in
                                                  guard let self else { return }
-                                                 actionsSubject.send(.done(mode: context.viewState.mode))
+                                                 actionsSubject.send(.done(mode: state.mode))
                                              },
                                              secondaryButton: .init(title: L10n.actionCancel, role: .cancel, action: nil))
         }
@@ -100,7 +101,7 @@ class SecureBackupRecoveryKeyScreenViewModel: SecureBackupRecoveryKeyScreenViewM
     }
 }
 
-extension SecureBackupRecoveryState {
+private extension SecureBackupRecoveryState {
     var viewMode: SecureBackupRecoveryKeyScreenViewMode {
         switch self {
         case .disabled:

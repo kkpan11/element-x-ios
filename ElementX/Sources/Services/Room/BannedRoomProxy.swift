@@ -1,7 +1,8 @@
 //
+// Copyright 2025 Element Creations Ltd.
 // Copyright 2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,29 +10,22 @@ import Foundation
 import MatrixRustSDK
 
 class BannedRoomProxy: BannedRoomProxyProtocol {
-    private let roomListItem: RoomListItemProtocol
-    private let roomPreview: RoomPreviewProtocol
+    private let room: Room
     
-    // A room identifier is constant and lazy stops it from being fetched
-    // multiple times over FFI
-    lazy var id = info.id
-    
-    let ownUserID: String
+    lazy var id = room.id()
+    lazy var ownUserID = room.ownUserId()
     
     let info: BaseRoomInfoProxyProtocol
+    
+    init(room: Room) async throws {
+        self.room = room
         
-    init(roomListItem: RoomListItemProtocol,
-         roomPreview: RoomPreviewProtocol,
-         ownUserID: String) throws {
-        self.roomListItem = roomListItem
-        self.roomPreview = roomPreview
-        self.ownUserID = ownUserID
-        info = try RoomPreviewInfoProxy(roomPreviewInfo: roomPreview.info())
+        info = try await RoomInfoProxy(roomInfo: room.roomInfo())
     }
     
     func forgetRoom() async -> Result<Void, RoomProxyError> {
         do {
-            return try await .success(roomPreview.forget())
+            return try await .success(room.forget())
         } catch {
             MXLog.error("Failed forgetting the room with error: \(error)")
             return .failure(.sdkError(error))

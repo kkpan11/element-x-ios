@@ -1,5 +1,6 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 // Please see LICENSE files in the repository root for full details.
@@ -8,26 +9,29 @@
 import SwiftUI
 
 class PlaceholderScreenCoordinator: CoordinatorProtocol {
-    private let showsBackgroundGradient: Bool
+    private let hideBrandChrome: Bool
+    private let hideGradientBackground: Bool
     
-    init(showsBackgroundGradient: Bool = false) {
-        self.showsBackgroundGradient = showsBackgroundGradient
+    init(hideBrandChrome: Bool, hideGradientBackground: Bool = true) {
+        self.hideBrandChrome = hideBrandChrome
+        self.hideGradientBackground = hideBrandChrome || hideGradientBackground
     }
     
     func toPresentable() -> AnyView {
-        AnyView(PlaceholderScreen(showsBackgroundGradient: showsBackgroundGradient))
+        AnyView(PlaceholderScreen(hideBrandChrome: hideBrandChrome, hideGradientBackground: hideGradientBackground))
     }
 }
 
 /// The screen shown in split view when the detail has no content.
 struct PlaceholderScreen: View {
-    let showsBackgroundGradient: Bool
+    let hideBrandChrome: Bool
+    let hideGradientBackground: Bool
     
     var body: some View {
-        AuthenticationStartLogo(isOnGradient: showsBackgroundGradient)
+        AuthenticationStartLogo(hideBrandChrome: hideBrandChrome, isOnGradient: !hideGradientBackground)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
-                if showsBackgroundGradient {
+                if !hideGradientBackground {
                     AuthenticationStartScreenBackgroundImage()
                 }
             }
@@ -40,11 +44,14 @@ struct PlaceholderScreen: View {
 
 struct PlaceholderScreen_Previews: PreviewProvider, TestablePreview {
     static var previews: some View {
-        PlaceholderScreen(showsBackgroundGradient: false)
-            .previewDisplayName("Screen")
+        PlaceholderScreen(hideBrandChrome: false, hideGradientBackground: false)
+            .previewDisplayName("With chrome and background")
         
-        PlaceholderScreen(showsBackgroundGradient: true)
-            .previewDisplayName("With background")
+        PlaceholderScreen(hideBrandChrome: false, hideGradientBackground: true)
+            .previewDisplayName("With chrome and no background")
+        
+        PlaceholderScreen(hideBrandChrome: true, hideGradientBackground: true)
+            .previewDisplayName("Without chrome")
         
         NavigationSplitView {
             List {
@@ -53,7 +60,7 @@ struct PlaceholderScreen_Previews: PreviewProvider, TestablePreview {
                 }
             }
         } detail: {
-            PlaceholderScreen(showsBackgroundGradient: false)
+            PlaceholderScreen(hideBrandChrome: false, hideGradientBackground: true)
         }
         .previewDisplayName("Split View")
         .previewInterfaceOrientation(.landscapeLeft)

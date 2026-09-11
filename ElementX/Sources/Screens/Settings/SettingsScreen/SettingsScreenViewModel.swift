@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -12,6 +13,8 @@ typealias SettingsScreenViewModelType = StateStoreViewModelV2<SettingsScreenView
 
 class SettingsScreenViewModel: SettingsScreenViewModelType, SettingsScreenViewModelProtocol {
     private let appSettings: AppSettings
+    private let clientProxy: ClientProxyProtocol
+    private let userIndicatorController: UserIndicatorControllerProtocol
     
     private var actionsSubject: PassthroughSubject<SettingsScreenViewModelAction, Never> = .init()
     
@@ -19,29 +22,32 @@ class SettingsScreenViewModel: SettingsScreenViewModelType, SettingsScreenViewMo
         actionsSubject.eraseToAnyPublisher()
     }
     
-    init(userSession: UserSessionProtocol, appSettings: AppSettings, isBugReportServiceEnabled: Bool) {
+    init(userSession: UserSessionProtocol, appSettings: AppSettings, isBugReportServiceEnabled: Bool, isInSecondaryWindow: Bool, userIndicatorController: UserIndicatorControllerProtocol) {
         self.appSettings = appSettings
+        clientProxy = userSession.clientProxy
+        self.userIndicatorController = userIndicatorController
         
         super.init(initialViewState: .init(deviceID: userSession.clientProxy.deviceID,
-                                           userID: userSession.clientProxy.userID,
+                                           userProfile: userSession.clientProxy.userProfilePublisher.value,
+                                           showLinkNewDeviceButton: appSettings.linkNewDeviceEnabled,
                                            showAccountDeactivation: userSession.clientProxy.canDeactivateAccount,
                                            showDeveloperOptions: appSettings.developerOptionsEnabled,
                                            showAnalyticsSettings: appSettings.canPromptForAnalytics,
-                                           isBugReportServiceEnabled: isBugReportServiceEnabled),
+                                           isBugReportServiceEnabled: isBugReportServiceEnabled,
+                                           navigationBarVisibility: isInSecondaryWindow ? .hidden : .automatic),
                    mediaProvider: userSession.mediaProvider)
         
-        appSettings.$developerOptionsEnabled
+        appSettings.developerOptionsEnabledPublisher
             .weakAssign(to: \.state.showDeveloperOptions, on: self)
             .store(in: &cancellables)
         
-        userSession.clientProxy.userAvatarURLPublisher
-            .receive(on: DispatchQueue.main)
-            .weakAssign(to: \.state.userAvatarURL, on: self)
+        appSettings.linkNewDeviceEnabledPublisher
+            .weakAssign(to: \.state.showLinkNewDeviceButton, on: self)
             .store(in: &cancellables)
         
-        userSession.clientProxy.userDisplayNamePublisher
+        userSession.clientProxy.userProfilePublisher
             .receive(on: DispatchQueue.main)
-            .weakAssign(to: \.state.userDisplayName, on: self)
+            .weakAssign(to: \.state.userProfile, on: self)
             .store(in: &cancellables)
         
         userSession.sessionSecurityStatePublisher
@@ -79,11 +85,12 @@ class SettingsScreenViewModel: SettingsScreenViewModelType, SettingsScreenViewMo
             .store(in: &cancellables)
         
         Task {
-            await userSession.clientProxy.loadUserAvatarURL()
-            await userSession.clientProxy.loadUserDisplayName()
-            await state.accountProfileURL = userSession.clientProxy.accountURL(action: .profile)
-            await state.accountSessionsListURL = userSession.clientProxy.accountURL(action: .sessionsList)
+            if case .success(true) = await userSession.clientProxy.isUserStatusSupported() {
+                state.showUserStatusInput = true
+            }
+            await userSession.clientProxy.loadUserProfileIfNeeded()
         }
+        Task { await state.accountProfileURL = userSession.clientProxy.accountURL(action: .profile) }
     }
     
     override func process(viewAction: SettingsScreenViewAction) {
@@ -92,6 +99,22 @@ class SettingsScreenViewModel: SettingsScreenViewModelType, SettingsScreenViewMo
             actionsSubject.send(.close)
         case .userDetails:
             actionsSubject.send(.userDetails)
+        case .userStatus(.pickStatus):
+            state.bindings.isPresentingStatusPicker = true
+        case .userStatus(.customStatus):
+            state.bindings.isPresentingStatusPicker = false
+            state.bindings.isShowingCustomStatusField = true
+        case .userStatus(.pickCustomEmoji):
+            pickCustomEmoji()
+        case .userStatus(.set(let status)):
+            Task { await setUserStatus(status) }
+        case .userStatus(.clear):
+            Task { await clearUserStatus() }
+        case .userStatus(.cancel):
+            state.bindings.isPresentingStatusPicker = false
+            state.bindings.isShowingCustomStatusField = false
+        case .linkNewDevice:
+            actionsSubject.send(.linkNewDevice)
         case let .manageAccount(url):
             actionsSubject.send(.manageAccount(url: url))
         case .analytics:
@@ -112,6 +135,8 @@ class SettingsScreenViewModel: SettingsScreenViewModelType, SettingsScreenViewMo
             actionsSubject.send(.notifications)
         case .advancedSettings:
             actionsSubject.send(.advancedSettings)
+        case .labs:
+            actionsSubject.send(.labs)
         case .enableDeveloperOptions:
             appSettings.developerOptionsEnabled.toggle()
         case .developerOptions:
@@ -119,5 +144,73 @@ class SettingsScreenViewModel: SettingsScreenViewModelType, SettingsScreenViewMo
         case .deactivateAccount:
             actionsSubject.send(.deactivateAccount)
         }
+    }
+    
+    // MARK: - Private
+    
+    private var pickCustomEmojiCancellable: AnyCancellable?
+    private func pickCustomEmoji() {
+        let (stream, continuation) = AsyncStream<String>.makeStream()
+        actionsSubject.send(.userStatusEmojiPicker(continuation))
+        
+        pickCustomEmojiCancellable = Task { [weak self] in
+            for await emoji in stream {
+                self?.state.bindings.customStatusEmoji = Character(emoji)
+            }
+        }
+        .asCancellable()
+    }
+    
+    private func setUserStatus(_ status: UserStatus.Raw) async {
+        showSavingIndicator()
+        defer { hideSavingIndicator() }
+        
+        state.bindings.isPresentingStatusPicker = false
+        state.bindings.isShowingCustomStatusField = false
+        
+        if case .failure = await clientProxy.setUserStatus(status) {
+            showFailureIndicator()
+        }
+    }
+    
+    /// Clears both the `UserStatus.Raw` and `UserStatus.Call` values simultaneously.
+    private func clearUserStatus() async {
+        showSavingIndicator()
+        defer { hideSavingIndicator() }
+        
+        state.bindings.isPresentingStatusPicker = false
+        state.bindings.isShowingCustomStatusField = false
+        
+        if case .failure = await clientProxy.clearUserStatus() {
+            showFailureIndicator()
+        }
+    }
+    
+    // MARK: - Indicators
+    
+    private static var savingIndicatorID: String {
+        "\(Self.self)-Saving"
+    }
+    
+    private static var failureIndicatorID: String {
+        "\(Self.self)-Failure"
+    }
+    
+    private func showSavingIndicator() {
+        userIndicatorController.submitIndicator(UserIndicator(id: Self.savingIndicatorID,
+                                                              type: .toast(progress: .indeterminate),
+                                                              title: L10n.commonSaving,
+                                                              persistent: true))
+    }
+    
+    private func hideSavingIndicator() {
+        userIndicatorController.retractIndicatorWithId(Self.savingIndicatorID)
+    }
+    
+    private func showFailureIndicator() {
+        userIndicatorController.submitIndicator(UserIndicator(id: Self.failureIndicatorID,
+                                                              type: .toast,
+                                                              title: L10n.commonFailed,
+                                                              icon: \.close))
     }
 }

@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,9 +10,8 @@ import Compound
 import SwiftUI
 
 struct EmojiPickerScreen: View {
-    @ObservedObject var context: EmojiPickerScreenViewModel.Context
+    let context: EmojiPickerScreenViewModel.Context
     
-    var selectedEmojis = Set<String>()
     @State var searchString = ""
     @State private var isSearching = false
     
@@ -20,7 +20,7 @@ struct EmojiPickerScreen: View {
     private let feedbackGenerator = UIImpactFeedbackGenerator(style: .heavy)
     
     var body: some View {
-        NavigationStack {
+        ElementNavigationStack {
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: minimumWidth))], spacing: 16) {
                     ForEach(context.viewState.categories) { category in
@@ -36,6 +36,7 @@ struct EmojiPickerScreen: View {
                                         .background(Circle()
                                             .foregroundColor(emojiBackgroundColor(for: emoji.value)))
                                 }
+                                .accessibilityLabel(accessibilityLabel(for: emoji.value))
                             }
                         } header: {
                             EmojiPickerScreenHeaderView(title: category.name)
@@ -46,7 +47,7 @@ struct EmojiPickerScreen: View {
                 }
                 .padding(.horizontal, 6)
             }
-            .navigationTitle(L10n.commonReactions)
+            .navigationTitle(context.viewState.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
             .isSearching($isSearching)
@@ -62,8 +63,16 @@ struct EmojiPickerScreen: View {
         }
     }
     
+    private func accessibilityLabel(for emoji: String) -> String {
+        if context.viewState.selectedEmojis.contains(emoji) {
+            return L10n.a11yRemoveReaction(emoji)
+        } else {
+            return L10n.a11yAddReaction(emoji)
+        }
+    }
+    
     private func emojiBackgroundColor(for emoji: String) -> Color {
-        if selectedEmojis.contains(emoji) {
+        if context.viewState.selectedEmojis.contains(emoji) {
             return .compound.bgActionPrimaryRest
         } else {
             return .clear
@@ -91,25 +100,28 @@ struct EmojiPickerScreen: View {
 
 // MARK: - Previews
 
+@available(iOS 26.0, *)
 struct EmojiPickerScreen_Previews: PreviewProvider, TestablePreview {
-    static let viewModel = EmojiPickerScreenViewModel(emojiProvider: EmojiProvider(appSettings: ServiceLocator.shared.settings))
+    static let viewModel = EmojiPickerScreenViewModel(selectedEmojis: ["😀", "😄"],
+                                                      emojiProvider: EmojiProvider(appSettings: .volatile()),
+                                                      continuation: AsyncStream<String>.makeStream().continuation)
     
     static var previews: some View {
-        EmojiPickerScreen(context: viewModel.context, selectedEmojis: ["😀", "😄"])
+        EmojiPickerScreen(context: viewModel.context)
             .previewDisplayName("Screen")
-            .snapshotPreferences(expect: viewModel.context.$viewState.map { state in
-                !state.categories.isEmpty
-            })
+            .snapshotPreferences(expect: viewModel.context.observe(\.viewState.categories).map { !$0.isEmpty })
     }
 }
 
 struct EmojiPickerScreenSheet_Previews: PreviewProvider {
-    static let viewModel = EmojiPickerScreenViewModel(emojiProvider: EmojiProvider(appSettings: ServiceLocator.shared.settings))
+    static let viewModel = EmojiPickerScreenViewModel(selectedEmojis: ["😀", "😄"],
+                                                      emojiProvider: EmojiProvider(appSettings: .volatile()),
+                                                      continuation: AsyncStream<String>.makeStream().continuation)
     
     static var previews: some View {
         Text("Timeline view")
             .sheet(isPresented: .constant(true)) {
-                EmojiPickerScreen(context: viewModel.context, selectedEmojis: ["😀", "😄"])
+                EmojiPickerScreen(context: viewModel.context)
             }
             .previewDisplayName("Sheet")
     }

@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -17,11 +18,11 @@ class AppLockScreenViewModel: AppLockScreenViewModelType, AppLockScreenViewModel
     var actions: AnyPublisher<AppLockScreenViewModelAction, Never> {
         actionsSubject.eraseToAnyPublisher()
     }
-
-    init(appLockService: AppLockServiceProtocol) {
+    
+    init(appLockService: AppLockServiceProtocol, mode: AppLockScreenMode = .appUnlock) {
         self.appLockService = appLockService
         
-        super.init(initialViewState: AppLockScreenViewState(bindings: .init()))
+        super.init(initialViewState: AppLockScreenViewState(mode: mode, bindings: .init()))
         
         appLockService.numberOfPINAttempts
             .weakAssign(to: \.state.numberOfPINAttempts, on: self)
@@ -50,6 +51,8 @@ class AppLockScreenViewModel: AppLockScreenViewModelType, AppLockScreenViewModel
             state.bindings.pinCode = ""
         case .forgotPIN:
             handleForgotPIN()
+        case .cancelVerifyDeviceOwner:
+            actionsSubject.send(.cancelVerifyDeviceOwner)
         }
     }
     

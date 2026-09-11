@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -13,11 +14,11 @@ struct MessageComposerTextField: View {
     @Binding var text: NSAttributedString
     @Binding var presendCallback: (() -> Void)?
     @Binding var selectedRange: NSRange
-
+    
     let maxHeight: CGFloat
     let keyHandler: GenericKeyHandler
     let pasteHandler: PasteHandler
-
+    
     var body: some View {
         UITextViewWrapper(text: $text,
                           presendCallback: $presendCallback,
@@ -29,7 +30,7 @@ struct MessageComposerTextField: View {
             .background(placeholderView, alignment: .topLeading)
             .background { keyboardShortcuts }
     }
-
+    
     @ViewBuilder
     private var placeholderView: some View {
         if text.string.isEmpty {
@@ -41,30 +42,28 @@ struct MessageComposerTextField: View {
     }
     
     private var keyboardShortcuts: some View {
-        Group {
-            Button("") {
-                keyHandler(.keyboardEscape)
-            }
-            // Need this to enable escape on the textView and forward the presses
-            .keyboardShortcut(.escape, modifiers: [])
+        Button("") {
+            keyHandler(.keyboardEscape)
         }
+        // Need this to enable escape on the textView and forward the presses
+        .keyboardShortcut(.escape, modifiers: [])
     }
 }
 
 private struct UITextViewWrapper: UIViewRepresentable {
     @Environment(\.timelineContext) private var timelineContext
-
+    
     @Binding var text: NSAttributedString
     @Binding var presendCallback: (() -> Void)?
     @Binding var selectedRange: NSRange
-
+    
     let maxHeight: CGFloat
-
+    
     let keyHandler: GenericKeyHandler
     let pasteHandler: PasteHandler
-
+    
     private let font = UIFont.preferredFont(forTextStyle: .body)
-
+    
     func makeUIView(context: UIViewRepresentableContext<UITextViewWrapper>) -> UITextView {
         // Need to use TextKit 1 for mentions
         let textView = ElementTextView(timelineContext: timelineContext,
@@ -88,22 +87,21 @@ private struct UITextViewWrapper: UIViewRepresentable {
         if ProcessInfo.processInfo.isiOSAppOnMac {
             textView.autocorrectionType = .no
         }
-
+        
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         
         return textView
     }
-
+    
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
         // Note: Coalescing a width of zero here returns a size for the view with 1 line of text visible.
-        let newSize = uiView.sizeThatFits(CGSize(width: proposal.width ?? .zero,
-                                                 height: CGFloat.greatestFiniteMagnitude))
+        let newSize = uiView.sizeThatFits(CGSize(width: proposal.width ?? .zero, height: maxHeight))
         let width = proposal.width ?? newSize.width
         let height = min(maxHeight, newSize.height)
-
+        
         return CGSize(width: width, height: height)
     }
-
+    
     func updateUIView(_ textView: UITextView, context: UIViewRepresentableContext<UITextViewWrapper>) {
         // Prevent the textView from inheriting attributes from mention pills
         textView.typingAttributes = [.font: font,
@@ -149,40 +147,35 @@ private struct UITextViewWrapper: UIViewRepresentable {
             }
         }
     }
-
+    
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text,
                     selectedRange: $selectedRange,
-                    maxHeight: maxHeight,
                     keyHandler: keyHandler,
                     pasteHandler: pasteHandler)
     }
-
+    
     final class Coordinator: NSObject, UITextViewDelegate, ElementTextViewDelegate {
         private var text: Binding<NSAttributedString>
         private var selectedRange: Binding<NSRange>
-
-        private let maxHeight: CGFloat
-
+        
         private let keyHandler: GenericKeyHandler
         private let pasteHandler: PasteHandler
-
+        
         init(text: Binding<NSAttributedString>,
              selectedRange: Binding<NSRange>,
-             maxHeight: CGFloat,
              keyHandler: @escaping GenericKeyHandler,
              pasteHandler: @escaping PasteHandler) {
             self.text = text
             self.selectedRange = selectedRange
-            self.maxHeight = maxHeight
             self.keyHandler = keyHandler
             self.pasteHandler = pasteHandler
         }
-
+        
         func textViewDidChange(_ textView: UITextView) {
             text.wrappedValue = textView.attributedText
         }
-
+        
         func textViewDidReceiveKeyPress(_ textView: UITextView, key: UIKeyboardHIDUsage) {
             keyHandler(key)
         }
@@ -190,9 +183,9 @@ private struct UITextViewWrapper: UIViewRepresentable {
         func textViewDidReceiveShiftEnterKeyPress(_ textView: UITextView) {
             textView.insertText("\n")
         }
-
-        func textView(_ textView: UITextView, didReceivePasteWith provider: NSItemProvider) {
-            pasteHandler(provider)
+        
+        func textView(_ textView: UITextView, didReceivePasteWith providers: [NSItemProvider]) {
+            pasteHandler(providers)
         }
         
         func textViewDidChangeSelection(_ textView: UITextView) {
@@ -208,12 +201,11 @@ private struct UITextViewWrapper: UIViewRepresentable {
 private protocol ElementTextViewDelegate: AnyObject {
     func textViewDidReceiveShiftEnterKeyPress(_ textView: UITextView)
     func textViewDidReceiveKeyPress(_ textView: UITextView, key: UIKeyboardHIDUsage)
-    func textView(_ textView: UITextView, didReceivePasteWith provider: NSItemProvider)
+    func textView(_ textView: UITextView, didReceivePasteWith providers: [NSItemProvider])
 }
 
 private class ElementTextView: UITextView, PillAttachmentViewProviderDelegate {
     private(set) var timelineContext: TimelineViewModel.Context?
-    private var presendCallback: Binding<(() -> Void)?>
     private var pillViews = NSHashTable<UIView>.weakObjects()
     
     weak var elementDelegate: ElementTextViewDelegate?
@@ -221,7 +213,6 @@ private class ElementTextView: UITextView, PillAttachmentViewProviderDelegate {
     init(timelineContext: TimelineViewModel.Context?,
          presendCallback: Binding<(() -> Void)?>) {
         self.timelineContext = timelineContext
-        self.presendCallback = presendCallback
         
         super.init(frame: .zero, textContainer: nil)
         
@@ -242,11 +233,13 @@ private class ElementTextView: UITextView, PillAttachmentViewProviderDelegate {
         [UIKeyCommand(input: "\r", modifierFlags: .shift, action: #selector(shiftEnterKeyPressed)),
          UIKeyCommand(input: "\r", modifierFlags: [], action: #selector(enterKeyPressed))]
     }
-
+    
+    // periphery:ignore:parameters sender - required for objc selector
     @objc func shiftEnterKeyPressed(sender: UIKeyCommand) {
         elementDelegate?.textViewDidReceiveShiftEnterKeyPress(self)
     }
     
+    // periphery:ignore:parameters sender - required for objc selector
     @objc func enterKeyPressed(sender: UIKeyCommand) {
         elementDelegate?.textViewDidReceiveKeyPress(self, key: .keyboardReturnOrEnter)
     }
@@ -269,31 +262,38 @@ private class ElementTextView: UITextView, PillAttachmentViewProviderDelegate {
         
         super.pressesBegan(presses, with: event)
     }
-
+    
     // Pasting support
-
+    
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if super.canPerformAction(action, withSender: sender) {
             return true
         }
-
+        
         guard action == #selector(paste(_:)) else {
             return false
         }
-
-        return UIPasteboard.general.itemProviders.first?.isSupportedForPasteOrDrop ?? false
+        
+        return !UIPasteboard.general.itemProviders.contains { !$0.isSupportedForPasteOrDrop }
     }
-
+    
     override func paste(_ sender: Any?) {
-        guard let provider = UIPasteboard.general.itemProviders.first,
-              provider.isSupportedForPasteOrDrop else {
-            // If the item is not supported for media upload then
-            // just try pasting its contents into the textfield
+        // When pasting a link over a selection, wrap the selection in a markdown link.
+        if selectedRange.length > 0, let link = UIPasteboard.general.pastedLink {
+            let selectedText = (attributedText.string as NSString).substring(with: selectedRange)
+            insertText("[\(selectedText)](\(link))")
+            return
+        }
+        
+        let providers = UIPasteboard.general.itemProviders
+        
+        // Use the default behavior if there are any unsupported providers
+        guard !providers.contains(where: { !$0.isSupportedForPasteOrDrop }) else {
             super.paste(sender)
             return
         }
-
-        elementDelegate?.textView(self, didReceivePasteWith: provider)
+        
+        elementDelegate?.textView(self, didReceivePasteWith: providers)
     }
     
     // MARK: PillAttachmentViewProviderDelegate
@@ -312,14 +312,6 @@ private class ElementTextView: UITextView, PillAttachmentViewProviderDelegate {
     func registerPillView(_ pillView: UIView) {
         pillViews.add(pillView)
     }
-
-    func flushPills() {
-        for view in pillViews.allObjects {
-            view.alpha = 0.0
-            view.removeFromSuperview()
-        }
-        pillViews.removeAllObjects()
-    }
     
     // MARK: - Private
     
@@ -333,6 +325,25 @@ private class ElementTextView: UITextView, PillAttachmentViewProviderDelegate {
     }
 }
 
+private extension UIPasteboard {
+    /// The pasteboard's string contents when they consist of a single link and nothing else.
+    var pastedLink: String? {
+        guard let string = string?.trimmingCharacters(in: .whitespacesAndNewlines), !string.isEmpty,
+              let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return nil
+        }
+        
+        let range = NSRange(string.startIndex..., in: string)
+        let matches = detector.matches(in: string, range: range)
+        
+        guard matches.count == 1, matches[0].range == range else {
+            return nil
+        }
+        
+        return string
+    }
+}
+
 struct MessageComposerTextField_Previews: PreviewProvider, TestablePreview {
     static var previews: some View {
         VStack(spacing: 16) {
@@ -341,15 +352,15 @@ struct MessageComposerTextField_Previews: PreviewProvider, TestablePreview {
             PreviewWrapper(text: "A really long message that will wrap to multiple lines on a phone in portrait.")
         }
     }
-
+    
     struct PreviewWrapper: View {
         @State var text: NSAttributedString
-
+        
         init(text: String) {
-            _text = .init(initialValue: .init(string: text, attributes: [.font: UIFont.preferredFont(forTextStyle: .body),
-                                                                         .foregroundColor: UIColor.compound.textPrimary]))
+            self.text = .init(string: text, attributes: [.font: UIFont.preferredFont(forTextStyle: .body),
+                                                         .foregroundColor: UIColor.compound.textPrimary])
         }
-
+        
         var body: some View {
             MessageComposerTextField(placeholder: "Placeholder",
                                      text: $text,

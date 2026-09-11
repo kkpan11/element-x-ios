@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,7 +10,7 @@ import Compound
 import SwiftUI
 
 struct EncryptionResetScreen: View {
-    @ObservedObject var context: EncryptionResetScreenViewModel.Context
+    @Bindable var context: EncryptionResetScreenViewModel.Context
     
     var body: some View {
         FullscreenDialog {
@@ -68,8 +69,7 @@ struct EncryptionResetScreen: View {
         .frame(maxWidth: .infinity)
         .environment(\.backgroundStyle, AnyShapeStyle(.compound.bgSubtleSecondary))
     }
-
-    @ViewBuilder
+    
     private func checkMarkItem(title: String, position: ListPosition, positive: Bool) -> some View {
         VisualListItem(title: title, position: position) {
             CompoundIcon(positive ? \.check : \.info)
@@ -94,7 +94,7 @@ struct EncryptionResetScreen_Previews: PreviewProvider, TestablePreview {
     static let viewModel = EncryptionResetScreenViewModel(clientProxy: ClientProxyMock(.init()),
                                                           userIndicatorController: UserIndicatorControllerMock())
     static var previews: some View {
-        NavigationStack {
+        ElementNavigationStack {
             EncryptionResetScreen(context: viewModel.context)
         }
     }

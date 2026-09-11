@@ -1,7 +1,8 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -22,6 +23,7 @@ enum A11yIdentifiers {
     static let loginScreen = LoginScreen()
     static let authenticationStartScreen = AuthenticationStartScreen()
     static let reportContent = ReportContent()
+    static let joinRoomScreen = JoinRoomScreen()
     static let roomScreen = RoomScreen()
     static let roomDetailsScreen = RoomDetailsScreen()
     static let roomNotificationSettingsScreen = RoomNotificationSettingsScreen()
@@ -41,7 +43,13 @@ enum A11yIdentifiers {
     static let notificationSettingsEditScreen = NotificationSettingsEditScreen()
     static let pollFormScreen = PollFormScreen()
     static let roomPollsHistoryScreen = RoomPollsHistoryScreen()
+    static let roomMembersListScreen = RoomMembersListScreen()
     static let manageRoomMemberSheet = ManageRoomMemberSheet()
+    static let spacesScreen = SpacesScreen()
+    static let spaceScreen = SpaceScreen()
+    static let spaceAddRoomsScreen = SpaceAddRoomsScreen()
+    static let spaceSettingsScreen = SpaceSettingsScreen()
+    static let linkNewDeviceScreen = LinkNewDeviceScreen()
     
     struct AlertInfo {
         let primaryButton = "alert_info-primary_button"
@@ -49,7 +57,10 @@ enum A11yIdentifiers {
     }
     
     struct AppLockScreen {
-        func numpad(_ digit: Int) -> String { "app_lock-numpad_\(digit)" }
+        let cancel = "app_lock-cancel"
+        func numpad(_ digit: Int) -> String {
+            "app_lock-numpad_\(digit)"
+        }
     }
     
     struct AppLockSetupBiometricsScreen {
@@ -65,13 +76,13 @@ enum A11yIdentifiers {
         let changePIN = "app_lock_setup_settings-change_pin"
         let removePIN = "app_lock_setup_settings-remove_pin"
     }
-
+    
     struct AnalyticsPromptScreen {
         let title = "analytics_prompt-title"
         let enable = "analytics_prompt-enable"
         let notNow = "analytics_prompt-not_now"
     }
-
+    
     struct BugReportScreen {
         let report = "bug_report-report"
         let sendLogs = "bug_report-send_logs"
@@ -101,6 +112,7 @@ enum A11yIdentifiers {
         let userAvatar = "home_screen-user_avatar"
         let recoveryKeyConfirmationBannerContinue = "home_screen-recovery_key_confirmation_continue"
         let startChat = "home_screen-start_chat"
+        let spaceFilters = "home_screen-space_filters"
         
         let roomNamePrefix = "home_screen-room_name"
         func roomName(_ name: String) -> String {
@@ -123,14 +135,18 @@ enum A11yIdentifiers {
     struct AuthenticationStartScreen {
         let signIn = "authentication_start-sign_in"
         let signInWithQr = "authentication_start-sign_in_with_qr"
-        let reportAProblem = "authentication_start-report_a_problem"
+        let appVersion = "authentication_start-app_version"
         let hidden = "authentication_start-hidden"
     }
     
     struct ReportContent {
         let ignoreUser = "report_content-ignore_user"
     }
-        
+    
+    struct JoinRoomScreen {
+        let join = "join-room_join"
+    }
+    
     struct RoomScreen {
         let name = "room-name"
         let avatar = "room-avatar"
@@ -144,11 +160,15 @@ enum A11yIdentifiers {
         let joinCall = "room-join_call"
         let scrollToBottom = "room-scroll_to_bottom"
         
+        let startVoiceCall = "room-start_voice_call"
+        let startVideoCall = "room-start_video_call"
+        
         let messageComposer = "room-message_composer"
         let sendButton = "room-send_button"
-
+        let sendInfo = "room-send_info"
+        
         let composerToolbar = ComposerToolbar()
-
+        
         struct ComposerToolbar {
             let bold = "composer_toolbar-bold"
             let italic = "composer_toolbar-italic"
@@ -165,12 +185,17 @@ enum A11yIdentifiers {
             let openComposeOptions = "composer_toolbar-open_compose_options"
             let closeFormattingOptions = "composer_toolbar-close-formatting-options"
         }
+        
+        let timelineItemActionMenuAction = TimelineItemActionMenuAction()
+        
+        struct TimelineItemActionMenuAction {
+            let edit = "timeline_item_action_menu-edit"
+        }
     }
     
     struct RoomDetailsScreen {
         let addTopic = "room_details-add_topic"
         let avatar = "room_details-avatar"
-        let dmAvatar = "room_details-dm_avatar"
         let people = "room_details-people"
         let notifications = "room_details-notifications"
         let pollsHistory = "room_details-polls_history"
@@ -190,9 +215,7 @@ enum A11yIdentifiers {
     struct RoomRolesAndPermissionsScreen {
         let administrators = "room_roles_and_permissions-administrators"
         let moderators = "room_roles_and_permissions-moderators"
-        let roomDetails = "room_roles_and_permissions-room_details"
-        let messagesAndContent = "room_roles_and_permissions-messages_and_content"
-        let memberModeration = "room_roles_and_permissions-member_moderation"
+        let permissions = "room_roles_and_permissions-permissions"
     }
     
     struct SecureBackupScreen {
@@ -222,7 +245,6 @@ enum A11yIdentifiers {
         let acceptVerificationRequest = "session_verification-accept_verification_request"
         let ignoreVerificationRequest = "session_verification-ignore_verification_request"
         let requestVerification = "session_verification-request_verification"
-        let startSasVerification = "session_verification-start_sas_verification"
         let acceptChallenge = "session_verification-accept_challenge"
         let declineChallenge = "session_verification-decline_challenge"
         let emojiWrapper = "session_verification-emojis"
@@ -263,16 +285,24 @@ enum A11yIdentifiers {
     }
     
     struct CreateRoomScreen {
+        let create = "create_room-create"
+        let cancel = "create_room-cancel"
+        let roomAvatar = "create_room-room_avatar"
         let roomName = "create_room-room_name"
         let roomTopic = "create_room-room_topic"
+        let mediaPicker = "create_room-media_picker"
+        let filePicker = "create_room-file_picker"
     }
-
+    
     struct PollFormScreen {
         let addOption = "poll_form-add_option"
+        let maxSelections = "poll_form-max_selections"
+        let maxSelectionsDecrement = "poll_form-max_selections-decrement"
+        let maxSelectionsIncrement = "poll_form-max_selections-increment"
         let pollKind = "poll_form-kind"
         let question = "poll_form-question"
         let submit = "poll_form-submit"
-
+        
         private let optionPrefix = "poll_form-option"
         func optionID(_ index: Int) -> String {
             "\(optionPrefix)-\(index)"
@@ -294,7 +324,45 @@ enum A11yIdentifiers {
         let loadMore = "room_polls_history_screen-load_more"
     }
     
+    struct RoomMembersListScreen {
+        let invite = "room_members_list_screen-invite"
+        
+        let roomMemberPrefix = "room_members_list_screen-member"
+        func member(_ userID: String) -> String {
+            "\(roomMemberPrefix):\(userID)"
+        }
+    }
+    
     struct ManageRoomMemberSheet {
         let viewProfile = "manage_room_member_sheet-view_profile"
+    }
+    
+    struct SpacesScreen {
+        let roomNamePrefix = "spaces_screen-room_name"
+        func spaceRoomName(_ name: String) -> String {
+            "\(roomNamePrefix):\(name)"
+        }
+    }
+    
+    struct SpaceScreen {
+        let moreMenu = "space_screen-more_menu"
+        let createRoom = "space_screen-create_room"
+        let addExistingRooms = "space_screen-add_existing_rooms"
+        let viewMembers = "space_screen-view_members"
+        let settings = "space_screen-settings"
+    }
+    
+    struct SpaceAddRoomsScreen {
+        let cancel = "space_add_rooms_screen-cancel"
+    }
+    
+    struct SpaceSettingsScreen {
+        let editBaseInfo = "space_settings_screen-edit_space_info"
+    }
+    
+    struct LinkNewDeviceScreen {
+        let cancel = "link_new_device_screen-cancel"
+        let mobileDevice = "link_new_device_screen-mobile_device"
+        let desktopComputer = "link_new_device_screen-desktop_computer"
     }
 }

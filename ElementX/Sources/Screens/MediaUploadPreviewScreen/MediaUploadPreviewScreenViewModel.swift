@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,41 +10,49 @@ import Combine
 import MatrixRustSDK
 import SwiftUI
 
-typealias MediaUploadPreviewScreenViewModelType = StateStoreViewModel<MediaUploadPreviewScreenViewState, MediaUploadPreviewScreenViewAction>
+typealias MediaUploadPreviewScreenViewModelType = StateStoreViewModelV2<MediaUploadPreviewScreenViewState, MediaUploadPreviewScreenViewAction>
 
 class MediaUploadPreviewScreenViewModel: MediaUploadPreviewScreenViewModelType, MediaUploadPreviewScreenViewModelProtocol {
+    private let timelineController: TimelineControllerProtocol
     private let userIndicatorController: UserIndicatorControllerProtocol
-    private let roomProxy: JoinedRoomProxyProtocol
-    private let mediaUploadingPreprocessor: MediaUploadingPreprocessor
-    private let url: URL
     
-    private var processingTask: Task<Result<MediaInfo, MediaUploadingPreprocessorError>, Never>
+    private let mediaUploadingPreprocessor: MediaUploadingPreprocessor
+    private var mediaURLs: [URL]
+    
+    private var processingTask: Task<Result<[MediaInfo], MediaUploadingPreprocessorError>, Never>
     private var requestHandle: SendAttachmentJoinHandleProtocol?
+    private let clientProxy: ClientProxyProtocol
+    private let galleryEnabled: Bool
     
     private var actionsSubject: PassthroughSubject<MediaUploadPreviewScreenViewModelAction, Never> = .init()
     
     var actions: AnyPublisher<MediaUploadPreviewScreenViewModelAction, Never> {
         actionsSubject.eraseToAnyPublisher()
     }
-
-    init(userIndicatorController: UserIndicatorControllerProtocol,
-         roomProxy: JoinedRoomProxyProtocol,
-         mediaUploadingPreprocessor: MediaUploadingPreprocessor,
+    
+    init(mediaURLs: [URL],
+         caption: NSAttributedString?,
          title: String?,
-         url: URL,
-         shouldShowCaptionWarning: Bool) {
-        self.userIndicatorController = userIndicatorController
-        self.roomProxy = roomProxy
+         shouldShowCaptionWarning: Bool,
+         galleryEnabled: Bool,
+         mediaUploadingPreprocessor: MediaUploadingPreprocessor,
+         timelineController: TimelineControllerProtocol,
+         clientProxy: ClientProxyProtocol,
+         userIndicatorController: UserIndicatorControllerProtocol) {
+        self.mediaURLs = mediaURLs
         self.mediaUploadingPreprocessor = mediaUploadingPreprocessor
-        self.url = url
+        self.timelineController = timelineController
+        self.clientProxy = clientProxy
+        self.userIndicatorController = userIndicatorController
+        self.galleryEnabled = galleryEnabled
         
         // Start processing the media whilst the user is reviewing it/adding a caption.
-        processingTask = Task { await mediaUploadingPreprocessor.processMedia(at: url) }
+        processingTask = Self.processMedia(at: mediaURLs, preprocessor: mediaUploadingPreprocessor, clientProxy: clientProxy)
         
-        super.init(initialViewState: MediaUploadPreviewScreenViewState(url: url,
+        super.init(initialViewState: MediaUploadPreviewScreenViewState(mediaURLs: mediaURLs,
                                                                        title: title,
                                                                        shouldShowCaptionWarning: shouldShowCaptionWarning,
-                                                                       isRoomEncrypted: roomProxy.infoPublisher.value.isEncrypted))
+                                                                       bindings: .init(caption: caption ?? NSAttributedString())))
     }
     
     override func process(viewAction: MediaUploadPreviewScreenViewAction) {
@@ -55,28 +64,94 @@ class MediaUploadPreviewScreenViewModel: MediaUploadPreviewScreenViewModelType, 
             startLoading()
             
             Task {
+                defer { stopLoading() }
+                
                 switch await processingTask.value {
-                case .success(let mediaInfo):
-                    switch await sendAttachment(mediaInfo: mediaInfo, caption: caption) {
-                    case .success:
-                        actionsSubject.send(.dismiss)
-                    case .failure(let error):
-                        MXLog.error("Failed sending attachment with error: \(error)")
-                        showError(label: L10n.screenMediaUploadPreviewErrorFailedSending)
+                case .success(let mediaInfos):
+                    if galleryEnabled, mediaInfos.count > 1 {
+                        switch await sendGallery(mediaInfos: mediaInfos, caption: caption) {
+                        case .success:
+                            break
+                        case .failure(let error):
+                            MXLog.error("Failed sending gallery with error: \(error)")
+                            showError(label: L10n.screenMediaUploadPreviewErrorFailedSending)
+                        }
+                    } else {
+                        var perItemCaption = caption
+                        for mediaInfo in mediaInfos {
+                            switch await sendAttachment(mediaInfo: mediaInfo, caption: perItemCaption) {
+                            case .success:
+                                perItemCaption = nil // Set the caption only on the first uploaded file.
+                            case .failure(let error):
+                                MXLog.error("Failed sending media with error: \(error)")
+                                showError(label: L10n.screenMediaUploadPreviewErrorFailedSending)
+                            }
+                        }
                     }
                     
-                    stopLoading()
+                    actionsSubject.send(.dismiss)
+                case .failure(.maxUploadSizeUnknown):
+                    showAlert(.maxUploadSizeUnknown)
+                case .failure(.maxUploadSizeExceeded(let limit)):
+                    showAlert(.maxUploadSizeExceeded(limit: limit))
                 case .failure(let error):
                     MXLog.error("Failed processing media to upload with error: \(error)")
                     showError(label: L10n.screenMediaUploadPreviewErrorFailedProcessing)
-                    stopLoading()
                 }
             }
-            
         case .cancel:
             requestHandle?.cancel()
             actionsSubject.send(.dismiss)
+        case .editedMedia(let image, let index):
+            guard mediaURLs.indices.contains(index),
+                  let data = image.jpegData(compressionQuality: 1.0) else {
+                return
+            }
+            
+            do {
+                try data.write(to: mediaURLs[index], options: .atomic)
+                
+                state.mediaEditVersion += 1
+                
+                processingTask.cancel()
+                processingTask = Self.processMedia(at: mediaURLs, preprocessor: mediaUploadingPreprocessor, clientProxy: clientProxy)
+            } catch {
+                MXLog.error("Failed writing cropped image with error: \(error)")
+            }
         }
+    }
+    
+    private func sendGallery(mediaInfos: [MediaInfo], caption: String?) async -> Result<Void, TimelineControllerError> {
+        let itemInfos: [GalleryItemInfo] = mediaInfos.map { mediaInfo in
+            switch mediaInfo {
+            case let .image(imageURL, thumbnailURL, imageInfo):
+                .image(imageInfo: imageInfo,
+                       source: .file(filename: imageURL.path(percentEncoded: false)),
+                       caption: nil,
+                       formattedCaption: nil,
+                       thumbnailSource: .file(filename: thumbnailURL.path(percentEncoded: false)))
+            case let .video(videoURL, thumbnailURL, videoInfo):
+                .video(videoInfo: videoInfo,
+                       source: .file(filename: videoURL.path(percentEncoded: false)),
+                       caption: nil,
+                       formattedCaption: nil,
+                       thumbnailSource: .file(filename: thumbnailURL.path(percentEncoded: false)))
+            case let .audio(audioURL, audioInfo):
+                .audio(audioInfo: audioInfo,
+                       source: .file(filename: audioURL.path(percentEncoded: false)),
+                       caption: nil,
+                       formattedCaption: nil)
+            case let .file(fileURL, fileInfo):
+                .file(fileInfo: fileInfo,
+                      source: .file(filename: fileURL.path(percentEncoded: false)),
+                      caption: nil,
+                      formattedCaption: nil)
+            }
+        }
+        
+        return await timelineController.sendGallery(itemInfos: itemInfos,
+                                                    caption: caption,
+                                                    inReplyToEventID: nil)
     }
     
     func stopProcessing() {
@@ -85,31 +160,40 @@ class MediaUploadPreviewScreenViewModel: MediaUploadPreviewScreenViewModelType, 
     
     // MARK: - Private
     
-    private func sendAttachment(mediaInfo: MediaInfo, caption: String?) async -> Result<Void, TimelineProxyError> {
-        let requestHandle: ((SendAttachmentJoinHandleProtocol) -> Void) = { [weak self] handle in
+    private static func processMedia(at urls: [URL],
+                                     preprocessor: MediaUploadingPreprocessor,
+                                     clientProxy: ClientProxyProtocol) -> Task<Result<[MediaInfo], MediaUploadingPreprocessorError>, Never> {
+        Task {
+            guard case let .success(maxUploadSize) = await clientProxy.maxMediaUploadSize else { return .failure(.maxUploadSizeUnknown) }
+            return await preprocessor.processMedia(at: urls, maxUploadSize: maxUploadSize)
+        }
+    }
+    
+    private func sendAttachment(mediaInfo: MediaInfo, caption: String?) async -> Result<Void, TimelineControllerError> {
+        let requestHandle: (@MainActor @Sendable (SendAttachmentJoinHandleProtocol) -> Void) = { [weak self] handle in
             self?.requestHandle = handle
         }
         
         switch mediaInfo {
         case let .image(imageURL, thumbnailURL, imageInfo):
-            return await roomProxy.timeline.sendImage(url: imageURL,
+            return await timelineController.sendImage(url: imageURL,
                                                       thumbnailURL: thumbnailURL,
                                                       imageInfo: imageInfo,
                                                       caption: caption,
                                                       requestHandle: requestHandle)
         case let .video(videoURL, thumbnailURL, videoInfo):
-            return await roomProxy.timeline.sendVideo(url: videoURL,
+            return await timelineController.sendVideo(url: videoURL,
                                                       thumbnailURL: thumbnailURL,
                                                       videoInfo: videoInfo,
                                                       caption: caption,
                                                       requestHandle: requestHandle)
         case let .audio(audioURL, audioInfo):
-            return await roomProxy.timeline.sendAudio(url: audioURL,
+            return await timelineController.sendAudio(url: audioURL,
                                                       audioInfo: audioInfo,
                                                       caption: caption,
                                                       requestHandle: requestHandle)
         case let .file(fileURL, fileInfo):
-            return await roomProxy.timeline.sendFile(url: fileURL,
+            return await timelineController.sendFile(url: fileURL,
                                                      fileInfo: fileInfo,
                                                      caption: caption,
                                                      requestHandle: requestHandle)
@@ -121,8 +205,9 @@ class MediaUploadPreviewScreenViewModel: MediaUploadPreviewScreenViewModelType, 
     private func startLoading() {
         userIndicatorController.submitIndicator(UserIndicator(id: Self.loadingIndicatorIdentifier,
                                                               type: .modal(progress: .indeterminate, interactiveDismissDisabled: false, allowsInteraction: true),
-                                                              title: L10n.commonSending,
-                                                              persistent: true))
+                                                              title: L10n.commonPreparing,
+                                                              persistent: true),
+                                                delay: .milliseconds(100))
         
         state.shouldDisableInteraction = true
     }
@@ -135,6 +220,26 @@ class MediaUploadPreviewScreenViewModel: MediaUploadPreviewScreenViewModelType, 
     
     private func showError(label: String) {
         userIndicatorController.submitIndicator(UserIndicator(title: label))
+    }
+    
+    private func showAlert(_ alertType: MediaUploadPreviewAlertType) {
+        switch alertType {
+        case .maxUploadSizeUnknown:
+            state.bindings.alertInfo = .init(id: alertType,
+                                             title: L10n.commonSomethingWentWrong,
+                                             message: L10n.screenMediaUploadPreviewErrorCouldNotBeUploaded,
+                                             primaryButton: .init(title: L10n.actionTryAgain) { [weak self] in
+                                                 guard let self else { return }
+                                                 processingTask = Self.processMedia(at: mediaURLs, preprocessor: mediaUploadingPreprocessor, clientProxy: clientProxy)
+                                                 process(viewAction: .send)
+                                             },
+                                             secondaryButton: .init(title: L10n.actionCancel, role: .cancel) { })
+        case .maxUploadSizeExceeded(let limit):
+            state.bindings.alertInfo = .init(id: alertType,
+                                             title: L10n.screenMediaUploadPreviewErrorTooLargeTitle,
+                                             message: L10n.screenMediaUploadPreviewErrorTooLargeMessage(limit.formatted(.byteCount(style: .file))),
+                                             primaryButton: .init(title: L10n.actionCancel, role: .cancel) { })
+        }
     }
 }
 

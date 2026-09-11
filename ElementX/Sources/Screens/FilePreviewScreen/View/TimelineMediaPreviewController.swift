@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -21,12 +22,31 @@ class TimelineMediaPreviewController: QLPreviewController {
     
     private var barButtonTimer: Timer?
     
+    private var pageScrollViewObservation: AnyCancellable?
+    /// The content offset that the page scroll view rests at when showing the current item.
+    private var pageScrollViewRestingOffset: CGFloat = 0
+    
     private var cancellables: Set<AnyCancellable> = []
     
-    private var navigationBar: UINavigationBar? { view.subviews.first?.subviews.first { $0 is UINavigationBar } as? UINavigationBar }
-    private var toolbar: UIToolbar? { view.subviews.first?.subviews.last { $0 is UIToolbar } as? UIToolbar }
-    private var pageScrollView: UIScrollView? { view.firstScrollView() }
-    private var captionView: UIView { captionHostingController.view }
+    private var navigationBar: UINavigationBar? {
+        view.subviews.first?.subviews.first { $0 is UINavigationBar } as? UINavigationBar
+    }
+    
+    private var bottomBarItemsContainer: UIView? {
+        if #available(iOS 26, *) {
+            view.subviews.first?.subviews.last?.subviews.first
+        } else {
+            view.subviews.first?.subviews.last { $0 is UIToolbar }
+        }
+    }
+    
+    private var pageScrollView: UIScrollView? {
+        view.firstScrollView()
+    }
+    
+    private var captionView: UIView {
+        captionHostingController.view
+    }
     
     override var overrideUserInterfaceStyle: UIUserInterfaceStyle {
         get { .dark }
@@ -48,8 +68,15 @@ class TimelineMediaPreviewController: QLPreviewController {
         downloadIndicatorHostingController = UIHostingController(rootView: DownloadIndicatorView(context: context))
         downloadIndicatorHostingController.view.backgroundColor = .clear
         downloadIndicatorHostingController.sizingOptions = .intrinsicContentSize
+        // Let swipes that start on the overlay reach the page scroll view underneath.
+        downloadIndicatorHostingController.view.isUserInteractionEnabled = false
         
         super.init(nibName: nil, bundle: nil)
+        
+        headerHostingController.rootView.onMoveToWindow = { [weak self] in
+            guard #available(iOS 26, *) else { return }
+            self?.updateCaptionVisibility()
+        }
         
         view.addSubview(captionView)
         // Constraints added later as the toolbar isn't available yet.
@@ -105,28 +132,44 @@ class TimelineMediaPreviewController: QLPreviewController {
     override func viewWillLayoutSubviews() {
         super.viewWillLayoutSubviews()
         
-        if let toolbar {
-            // Using the toolbar's visibility doesn't work so check its frame.
-            captionView.isHidden = toolbar.frame.minY >= view.frame.maxY
+        if let bottomBarItemsContainer {
+            if #unavailable(iOS 26) {
+                // Using the toolbar's visibility doesn't work so check its frame.
+                captionView.isHidden = bottomBarItemsContainer.frame.minY >= view.frame.maxY
+            }
             
             if captionView.constraints.isEmpty {
                 captionHostingController.view.translatesAutoresizingMaskIntoConstraints = false
+                
+                let bottomConstraint = if #available(iOS 26, *) {
+                    captionView.bottomAnchor.constraint(equalTo: bottomBarItemsContainer.safeAreaLayoutGuide.bottomAnchor, constant: -50)
+                } else {
+                    captionView.bottomAnchor.constraint(equalTo: bottomBarItemsContainer.topAnchor)
+                }
+                
                 NSLayoutConstraint.activate([
-                    captionView.bottomAnchor.constraint(equalTo: toolbar.topAnchor),
-                    captionView.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
-                    captionView.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor)
+                    bottomConstraint,
+                    captionView.leadingAnchor.constraint(equalTo: bottomBarItemsContainer.leadingAnchor),
+                    captionView.trailingAnchor.constraint(equalTo: bottomBarItemsContainer.trailingAnchor)
                 ])
             }
         }
         
         navigationBar?.topItem?.titleView = headerHostingController.view
         
+        observePageScrollViewIfNeeded()
+        
         updateBarButtons()
         
         // Ridiculous hack to undo the controller's attempt to replace our info button with the list button.
         if barButtonTimer == nil {
             barButtonTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                self?.updateBarButtons()
+                // The timer is scheduled on the main run loop so it always fires on the main actor.
+                MainActor.assumeIsolated {
+                    self?.updateBarButtons()
+                    // Also re-centers the overlay once the scroll view has settled on an item.
+                    self?.updateOverlayPosition()
+                }
             }
         }
     }
@@ -136,6 +179,15 @@ class TimelineMediaPreviewController: QLPreviewController {
         barButtonTimer = nil
     }
     
+    @available(iOS 26, *)
+    private func updateCaptionVisibility() {
+        // The caption should be hidden alongside the header.
+        let isHeaderHidden = headerHostingController.view.window == nil
+        if captionView.isHidden != isHeaderHidden {
+            captionView.isHidden = isHeaderHidden
+        }
+    }
+    
     private func updateBarButtons() {
         guard let topItem = navigationBar?.topItem else { return }
         
@@ -143,6 +195,34 @@ class TimelineMediaPreviewController: QLPreviewController {
             let button = UIBarButtonItem(customView: detailsButtonHostingController.view)
             navigationBar?.topItem?.leftBarButtonItem = button
         }
+    }
+    
+    /// Makes the centered overlay (scan failure, download error/indicator) track the page scroll view
+    /// when swiping between items, as it would otherwise float statically above the moving pages.
+    private func observePageScrollViewIfNeeded() {
+        guard pageScrollViewObservation == nil, let pageScrollView else { return }
+        
+        pageScrollViewObservation = pageScrollView.publisher(for: \.contentOffset)
+            .sink { [weak self] _ in
+                self?.updateOverlayPosition()
+            }
+    }
+    
+    private func updateOverlayPosition() {
+        guard let pageScrollView, let overlayView = downloadIndicatorHostingController.view else { return }
+        
+        let pageWidth = pageScrollView.bounds.width
+        guard pageWidth > 0 else { return }
+        
+        // Whilst resting on an item, keep track of the offset that any swipe will start from.
+        if !pageScrollView.isDragging, !pageScrollView.isDecelerating {
+            pageScrollViewRestingOffset = pageScrollView.contentOffset.x
+        }
+        
+        let delta = pageScrollView.contentOffset.x - pageScrollViewRestingOffset
+        overlayView.transform = CGAffineTransform(translationX: -delta, y: 0)
+        // Fade towards the midpoint so the overlay never clashes with the neighbouring item's state.
+        overlayView.alpha = max(0, 1 - abs(delta) / (pageWidth / 2))
     }
     
     // MARK: Item loading
@@ -175,15 +255,17 @@ class TimelineMediaPreviewController: QLPreviewController {
     }
     
     private func handleUpdatedItems() {
-        if currentPreviewItem is TimelineMediaPreviewItem.Loading {
-            let dataSource = context.viewState.dataSource
-            if dataSource.previewController(self, previewItemAt: currentPreviewItemIndex) is TimelineMediaPreviewItem.Media {
-                refreshCurrentPreviewItem() // This will trigger loadCurrentItem automatically.
-            }
+        guard let displayedItem = currentPreviewItem as? TimelineMediaPreviewItem.Loading else { return }
+        
+        // The index may now hold a media, or a different placeholder having reached the end of
+        // the timeline, in which case what's on display is stale.
+        let dataSource = context.viewState.dataSource
+        if dataSource.previewController(self, previewItemAt: currentPreviewItemIndex) as AnyObject !== displayedItem {
+            refreshCurrentPreviewItem() // This will trigger loadCurrentItem automatically.
         }
     }
     
-    private func handleFileLoaded(itemID: TimelineItemIdentifier.EventOrTransactionID) {
+    private func handleFileLoaded(itemID: MediaPreviewItemID) {
         guard (currentPreviewItem as? TimelineMediaPreviewItem.Media)?.id == itemID else { return }
         
         // There's a bug where refreshCurrentPreviewItem completely breaks the QLPreviewController
@@ -200,7 +282,7 @@ class TimelineMediaPreviewController: QLPreviewController {
     private func presentMediaDetails(for mediaItem: TimelineMediaPreviewItem.Media) {
         let safeArea = view.safeAreaInsets.bottom
         let sheetHeightBinding = Binding { safeArea } set: { [weak self] newValue, _ in
-            self?.detailsHostingController?.sheetPresentationController?.detents = [.height(newValue + safeArea)]
+            self?.detailsHostingController?.sheetPresentationController?.detents = [.height(newValue)]
         }
         
         let hostingController = UIHostingController(rootView: TimelineMediaPreviewDetailsView(item: mediaItem,
@@ -236,11 +318,21 @@ class TimelineMediaPreviewController: QLPreviewController {
 
 private struct HeaderView: View {
     @ObservedObject var context: TimelineMediaPreviewViewModel.Context
-    private var currentItem: TimelineMediaPreviewItem { context.viewState.currentItem }
+    /// Called whenever the header is added or removed from a window.
+    var onMoveToWindow: () -> Void = { }
+    
+    private var currentItem: TimelineMediaPreviewItem {
+        context.viewState.currentItem
+    }
     
     var body: some View {
-        switch currentItem {
-        case .media(let mediaItem):
+        content
+            .background(WindowTrackingView(onMoveToWindow: onMoveToWindow))
+    }
+    
+    @ViewBuilder
+    private var content: some View {
+        if let mediaItem = currentItem.mediaItem {
             VStack(spacing: 0) {
                 Text(mediaItem.sender.displayName ?? mediaItem.sender.id)
                     .font(.compound.bodySMSemibold)
@@ -251,7 +343,7 @@ private struct HeaderView: View {
                     .textCase(.uppercase)
             }
             .fixedSize(horizontal: true, vertical: false)
-        case .loading:
+        } else {
             Text(L10n.commonLoadingMore)
                 .font(.compound.bodySMSemibold)
                 .foregroundStyle(.compound.textPrimary)
@@ -262,17 +354,12 @@ private struct HeaderView: View {
 
 private struct DetailsButton: View {
     @ObservedObject var context: TimelineMediaPreviewViewModel.Context
-    private var currentItem: TimelineMediaPreviewItem { context.viewState.currentItem }
-    
-    var isHidden: Bool {
-        switch currentItem {
-        case .media: false
-        case .loading: true
-        }
+    private var currentItem: TimelineMediaPreviewItem {
+        context.viewState.currentItem
     }
     
     var body: some View {
-        if case .media(let mediaItem) = currentItem {
+        if let mediaItem = currentItem.mediaItem {
             Button { context.send(viewAction: .showItemDetails(mediaItem)) } label: {
                 CompoundIcon(\.info)
             }
@@ -282,69 +369,157 @@ private struct DetailsButton: View {
 
 private struct CaptionView: View {
     @ObservedObject var context: TimelineMediaPreviewViewModel.Context
-    private var currentItem: TimelineMediaPreviewItem { context.viewState.currentItem }
+    private var currentItem: TimelineMediaPreviewItem {
+        context.viewState.currentItem
+    }
     
     var body: some View {
-        if case let .media(mediaItem) = currentItem, let caption = mediaItem.caption {
-            Text(caption)
-                .font(.compound.bodyLG)
-                .foregroundStyle(.compound.textPrimary)
-                .lineLimit(5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(16)
-                .background {
-                    BlurEffectView(style: .systemChromeMaterial) // Darkest material available, matches the bottom bar when content is beneath.
-                        .ignoresSafeArea()
-                }
+        if let mediaItem = currentItem.mediaItem, mediaItem.hasCaption {
+            CaptionScrollView(mediaItem: mediaItem)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+}
+
+private struct CaptionScrollView: View {
+    private let maxHeight: CGFloat = 120
+    
+    let mediaItem: TimelineMediaPreviewItem.Media
+    
+    @State private var shouldShowFade = false
+    
+    var body: some View {
+        ScrollView(.vertical) {
+            captionContent
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+        }
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentOffset.y >= geometry.contentSize.height - geometry.containerSize.height - geometry.contentInsets.bottom
+        } action: { _, isBottomVisible in
+            if shouldShowFade == isBottomVisible {
+                withAnimation(.elementDefault) { shouldShowFade = !isBottomVisible }
+            }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(maxHeight: maxHeight)
+        .overlay(alignment: .bottom) {
+            if shouldShowFade {
+                LinearGradient(stops: [.init(color: .clear, location: 0.0),
+                                       .init(color: .black.opacity(0.5), location: 1.0)],
+                               startPoint: .top,
+                               endPoint: .bottom)
+                    .frame(height: 40)
+            }
+        }
+        .background {
+            BlurEffectView(style: .systemChromeMaterial)
+                .ignoresSafeArea()
+        }
+    }
+    
+    @ViewBuilder
+    private var captionContent: some View {
+        if let formattedCaption = mediaItem.formattedCaption {
+            FormattedBodyText(attributedString: formattedCaption)
+        } else if let caption = mediaItem.caption {
+            FormattedBodyText(text: caption)
         }
     }
 }
 
 private struct DownloadIndicatorView: View {
     @ObservedObject var context: TimelineMediaPreviewViewModel.Context
-    private var currentItem: TimelineMediaPreviewItem { context.viewState.currentItem }
-    
-    private var shouldShowDownloadIndicator: Bool {
-        switch currentItem {
-        case .media(let mediaItem): mediaItem.fileHandle == nil
-        case .loading(.paginatingBackwards), .loading(.paginatingForwards): true
-        case .loading: false
-        }
+    private var currentItem: TimelineMediaPreviewItem {
+        context.viewState.currentItem
     }
     
     var body: some View {
-        if case let .media(mediaItem) = currentItem, mediaItem.downloadError != nil {
-            VStack(spacing: 24) {
-                CompoundIcon(\.errorSolid, size: .custom(48), relativeTo: .compound.headingLG)
-                    .foregroundStyle(.compound.iconCriticalPrimary)
-                    .padding(.vertical, 24.5)
-                    .padding(.horizontal, 28.5)
-                
-                VStack(spacing: 2) {
-                    Text(L10n.commonDownloadFailed)
-                        .font(.compound.headingMDBold)
-                        .foregroundStyle(.compound.textPrimary)
-                        .multilineTextAlignment(.center)
-                    Text(L10n.screenMediaBrowserDownloadErrorMessage)
-                        .font(.compound.bodyMD)
-                        .foregroundStyle(.compound.textPrimary)
-                        .multilineTextAlignment(.center)
-                }
+        switch currentItem {
+        case .media(let mediaItem):
+            if mediaItem.downloadError != nil {
+                downloadErrorView
+            } else if mediaItem.fileHandle == nil {
+                loadingIndicator(isScanning: false)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 40)
-            .background(.compound.bgSubtlePrimary, in: RoundedRectangle(cornerRadius: 14))
-        } else if shouldShowDownloadIndicator {
+        case .contentScan(let scan):
+            switch scan.state {
+            case .scanning:
+                loadingIndicator(isScanning: true)
+            case .failure(let failure):
+                TimelineMediaContentScanningFailureView(failure: failure)
+            }
+        case .loading(.paginatingBackwards), .loading(.paginatingForwards):
+            loadingIndicator(isScanning: false)
+        case .loading:
+            EmptyView()
+        }
+    }
+    
+    private var downloadErrorView: some View {
+        VStack(spacing: 24) {
+            CompoundIcon(\.errorSolid, size: .custom(48), relativeTo: .compound.headingLG)
+                .foregroundStyle(.compound.iconCriticalPrimary)
+                .padding(.vertical, 24.5)
+                .padding(.horizontal, 28.5)
+            
+            VStack(spacing: 2) {
+                Text(L10n.commonDownloadFailed)
+                    .font(.compound.headingMDBold)
+                    .foregroundStyle(.compound.textPrimary)
+                    .multilineTextAlignment(.center)
+                Text(L10n.screenMediaBrowserDownloadErrorMessage)
+                    .font(.compound.bodyMD)
+                    .foregroundStyle(.compound.textPrimary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 40)
+        .background(.compound.bgSubtlePrimary, in: RoundedRectangle(cornerRadius: 14))
+    }
+    
+    private func loadingIndicator(isScanning: Bool) -> some View {
+        VStack(spacing: 32) {
             ProgressView()
                 .controlSize(.large)
                 .tint(.compound.iconPrimary)
+            
+            if isScanning {
+                Text(L10n.contentScannerScanning)
+                    .font(.compound.bodyLGSemibold)
+                    .foregroundStyle(.compound.textPrimary)
+            }
         }
     }
 }
 
 // MARK: - Helpers
+
+/// An invisible view that reports when it is added to or removed from a window.
+private struct WindowTrackingView: UIViewRepresentable {
+    let onMoveToWindow: () -> Void
+    
+    func makeUIView(context: Context) -> TrackingView {
+        let view = TrackingView()
+        view.isUserInteractionEnabled = false
+        view.onMoveToWindow = onMoveToWindow
+        return view
+    }
+    
+    func updateUIView(_ uiView: TrackingView, context: Context) {
+        uiView.onMoveToWindow = onMoveToWindow
+    }
+    
+    class TrackingView: UIView {
+        var onMoveToWindow: (() -> Void)?
+        
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onMoveToWindow?()
+        }
+    }
+}
 
 private extension UIView {
     func firstScrollView() -> UIScrollView? {

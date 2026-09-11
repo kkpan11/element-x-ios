@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -12,9 +13,9 @@ enum Avatars {
     enum Size {
         case user(on: UserAvatarSizeOnScreen)
         case room(on: RoomAvatarSizeOnScreen)
-        //  custom
+        ///  custom
         case custom(CGFloat)
-
+        
         /// Value in UIKit points
         var value: CGFloat {
             switch self {
@@ -26,13 +27,13 @@ enum Avatars {
                 return val
             }
         }
-
+        
         /// Value in pixels by using the scale of the main screen
-        var scaledValue: CGFloat {
+        @MainActor var scaledValue: CGFloat {
             value * UIScreen.main.scale
         }
         
-        var scaledSize: CGSize {
+        @MainActor var scaledSize: CGSize {
             CGSize(width: scaledValue, height: scaledValue)
         }
     }
@@ -59,10 +60,15 @@ enum Avatars {
 }
 
 enum UserAvatarSizeOnScreen {
+    case chats
+    case chatsCompact
+    case spaces
+    case spacesCompact
     case timeline
-    case home
     case settings
     case roomDetails
+    case roomMembersList
+    case roomChangeRoles
     case dmDetails
     case startChat
     case memberDetails
@@ -70,6 +76,7 @@ enum UserAvatarSizeOnScreen {
     case readReceipt
     case readReceiptSheet
     case editUserDetails
+    case spaceHeader
     case completionSuggestions
     case blockedUsers
     case knockingUsersBannerStack
@@ -78,88 +85,86 @@ enum UserAvatarSizeOnScreen {
     case mediaPreviewDetails
     case sendInviteConfirmation
     case sessionVerification
+    case threadList
     case threadSummary
-
+    case map
+    case classicAppAccount
+    case search
+    
     var value: CGFloat {
         switch self {
         case .readReceipt:
-            return 16
-        case .readReceiptSheet:
-            return 32
-        case .timeline:
-            return 32
-        case .home:
-            return 32
-        case .completionSuggestions:
-            return 32
-        case .blockedUsers:
-            return 32
-        case .settings:
-            return 52
-        case .roomDetails:
-            return 44
-        case .startChat:
-            return 36
-        case .memberDetails:
-            return 96
-        case .inviteUsers:
-            return 56
-        case .editUserDetails:
-            return 96
-        case .dmDetails:
-            return 75
-        case .knockingUsersBannerStack:
-            return 28
-        case .knockingUserBanner:
-            return 32
-        case .knockingUserList:
-            return 52
-        case .mediaPreviewDetails:
-            return 32
-        case .sendInviteConfirmation:
-            return 64
-        case .sessionVerification:
-            return 52
+            16
+        case .spaceHeader:
+            20
         case .threadSummary:
-            return 28
+            24
+        case .knockingUsersBannerStack:
+            28
+        case .chatsCompact, .spacesCompact, .map,
+             .timeline, .readReceiptSheet, .completionSuggestions,
+             .blockedUsers, .roomMembersList, .knockingUserBanner:
+            32
+        case .startChat:
+            36
+        case .chats, .spaces:
+            40
+        case .roomDetails:
+            44
+        case .inviteUsers, .knockingUserList, .sessionVerification,
+             .settings, .threadList, .mediaPreviewDetails, .search:
+            52
+        case .roomChangeRoles:
+            56
+        case .sendInviteConfirmation:
+            64
+        case .dmDetails:
+            75
+        case .memberDetails, .editUserDetails, .classicAppAccount:
+            96
         }
     }
 }
 
 enum RoomAvatarSizeOnScreen {
+    case chats
+    case spaces
+    case spaceSettings
+    case spaceFilters
+    case authorizedSpaces
     case timeline
-    case home
+    case leaveSpace
     case messageForwarding
-    case globalSearch
+    case search
     case roomSelection
     case details
+    case editRoomDetails
     case notificationSettings
     case roomDirectorySearch
     case joinRoom
+    case spaceHeader
+    case editSpaceDetails
+    case spaceAddRooms
+    case spaceAddRoomsSelected
     case completionSuggestions
-
+    case createRoomSelectSpace
+    
     var value: CGFloat {
         switch self {
-        case .notificationSettings:
-            return 30
-        case .timeline:
-            return 32
-        case .roomDirectorySearch:
-            return 32
-        case .completionSuggestions:
-            return 32
-        case .messageForwarding:
-            return 36
-        case .globalSearch:
-            return 36
-        case .roomSelection:
-            return 36
-        case .home:
-            return 52
-        case .details:
-            return 96
-        case .joinRoom:
-            return 96
+        case .timeline, .leaveSpace, .notificationSettings, .roomDirectorySearch,
+             .completionSuggestions, .authorizedSpaces, .createRoomSelectSpace,
+             .spaceFilters:
+            32
+        case .messageForwarding, .roomSelection,
+             .spaceAddRooms:
+            36
+        case .chats, .spaces, .spaceSettings,
+             .spaceAddRoomsSelected, .search:
+            52
+        case .joinRoom, .spaceHeader, .editSpaceDetails:
+            64
+        case .details, .editRoomDetails:
+            96
         }
     }
 }

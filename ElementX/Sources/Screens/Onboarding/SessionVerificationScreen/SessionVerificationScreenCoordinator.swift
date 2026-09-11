@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -16,12 +17,12 @@ enum SessionVerificationScreenCoordinatorAction {
 enum SessionVerificationScreenFlow {
     case deviceInitiator
     case deviceResponder(requestDetails: SessionVerificationRequestDetails)
-    case userIntiator(userID: String)
+    case userInitiator(userID: String)
     case userResponder(requestDetails: SessionVerificationRequestDetails)
     
     var isResponder: Bool {
         switch self {
-        case .deviceInitiator, .userIntiator:
+        case .deviceInitiator, .userInitiator:
             false
         case .deviceResponder, .userResponder:
             true

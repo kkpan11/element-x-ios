@@ -33,8 +33,11 @@ targets:
 
     dependencies:
       - package: MatrixRustSDK
-      - package: Collections
       - package: Compound
+      - package: Collections
+      - package: KeychainAccess
+      - package: BuildExtensions
+        product: Macros
 
     info:
       path: Info.plist
@@ -46,25 +49,26 @@ targets:
         baseBundleIdentifier: $(BASE_BUNDLE_IDENTIFIER)
         keychainAccessGroupIdentifier: $(KEYCHAIN_ACCESS_GROUP_IDENTIFIER)
         productionAppName: $(PRODUCTION_APP_NAME)
+        isNightlyBuild: $(IS_NIGHTLY_BUILD)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareExtensionViewController
           NSExtensionAttributes:
-            IntentsSupported: [
-              INSendMessageIntent,
-            ]
+            IntentsSupported: [INSendMessageIntent]
             NSExtensionActivationRule:
-              NSExtensionActivationSupportsFileWithMaxCount: 1
-              NSExtensionActivationSupportsImageWithMaxCount: 1
-              NSExtensionActivationSupportsMovieWithMaxCount: 1
+              NSExtensionActivationSupportsFileWithMaxCount: 60
+              NSExtensionActivationSupportsImageWithMaxCount: 60
+              NSExtensionActivationSupportsMovieWithMaxCount: 60
               NSExtensionActivationSupportsText: true
-              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsWebURLWithMaxCount: 10
 
     entitlements:
       path: ShareExtension.entitlements
       properties:
         com.apple.security.application-groups:
         - $(APP_GROUP_IDENTIFIER)
+        keychain-access-groups:
+        - $(KEYCHAIN_ACCESS_GROUP_IDENTIFIER)
 
     settings:
       base:
@@ -74,20 +78,33 @@ targets:
         MARKETING_VERSION: $(MARKETING_VERSION)
         CURRENT_PROJECT_VERSION: $(CURRENT_PROJECT_VERSION)
         DEVELOPMENT_TEAM: $(DEVELOPMENT_TEAM)
+        SWIFT_VERSION: 6.2
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
 
     sources:
     - path: ../Sources
     - path: ../SupportingFiles
     - path: ../../ElementX/Sources/ShareExtension
-    - path: ../../ElementX/Sources/Application/AppSettings.swift
+    - path: ../../ElementX/Sources/AppHooks/AppHooks.swift
+    - path: ../../ElementX/Sources/AppHooks/Hooks/TracingHook.swift
+    - path: ../../ElementX/Sources/AppHooks/Hooks/ClientFactoryHook.swift
+    - path: ../../ElementX/Sources/AppHooks/Hooks/RemoteSettingsHook.swift
+    - path: ../../Components/Secrets/Secrets.swift
+    - path: ../../ElementX/Sources/Application/Settings
     - path: ../../ElementX/Sources/Application/TargetConfiguration.swift
+    - path: ../../ElementX/Sources/Services/AlertTones/NotificationTone.swift
+    - path: ../../ElementX/Sources/Services/Keychain/KeychainController.swift
+    - path: ../../ElementX/Sources/Services/Keychain/KeychainControllerProtocol.swift
+    - path: ../../ElementX/Sources/Services/UserSession/RestorationToken.swift
+    - path: ../../ElementX/Sources/Services/UserSession/SessionDirectories.swift
     - path: ../../ElementX/Sources/Other/Extensions/Bundle.swift
+    - path: ../../ElementX/Sources/Other/Extensions/Dictionary.swift
     - path: ../../ElementX/Sources/Other/Extensions/FileManager.swift
     - path: ../../ElementX/Sources/Other/Extensions/NSItemProvider.swift
     - path: ../../ElementX/Sources/Other/Extensions/ProcessInfo.swift
     - path: ../../ElementX/Sources/Other/Extensions/UIView.swift
     - path: ../../ElementX/Sources/Other/Extensions/URL.swift
     - path: ../../ElementX/Sources/Other/InfoPlistReader.swift
+    - path: ../../ElementX/Sources/Other/CurrentValuePublisher.swift
     - path: ../../ElementX/Sources/Other/Logging
-    - path: ../../ElementX/Sources/Other/UserPreference.swift
     - path: ../../ElementX/Sources/UITests/UITestsScreenIdentifier.swift

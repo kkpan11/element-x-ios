@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -12,12 +13,13 @@ struct PollFormScreenCoordinatorParameters {
     let mode: PollFormMode
     /// The max number of allowed options, if no value provided the default value of the view model will be used.
     var maxNumberOfOptions: Int?
+    let timelineController: TimelineControllerProtocol
+    let analytics: AnalyticsServiceProtocol
+    let userIndicatorController: UserIndicatorControllerProtocol
 }
 
 enum PollFormScreenCoordinatorAction {
-    case cancel
-    case delete
-    case submit(question: String, options: [String], pollKind: Poll.Kind)
+    case close
 }
 
 final class PollFormScreenCoordinator: CoordinatorProtocol {
@@ -30,7 +32,11 @@ final class PollFormScreenCoordinator: CoordinatorProtocol {
     }
     
     init(parameters: PollFormScreenCoordinatorParameters) {
-        viewModel = PollFormScreenViewModel(mode: parameters.mode, maxNumberOfOptions: parameters.maxNumberOfOptions)
+        viewModel = PollFormScreenViewModel(mode: parameters.mode,
+                                            maxNumberOfOptions: parameters.maxNumberOfOptions,
+                                            timelineController: parameters.timelineController,
+                                            analytics: parameters.analytics,
+                                            userIndicatorController: parameters.userIndicatorController)
     }
     
     func start() {
@@ -39,17 +45,13 @@ final class PollFormScreenCoordinator: CoordinatorProtocol {
             
             guard let self else { return }
             switch action {
-            case .cancel:
-                self.actionsSubject.send(.cancel)
-            case .delete:
-                self.actionsSubject.send(.delete)
-            case let .submit(question, options, pollKind):
-                self.actionsSubject.send(.submit(question: question, options: options, pollKind: pollKind))
+            case .close:
+                self.actionsSubject.send(.close)
             }
         }
         .store(in: &cancellables)
     }
-        
+    
     func toPresentable() -> AnyView {
         AnyView(PollFormScreen(context: viewModel.context))
     }

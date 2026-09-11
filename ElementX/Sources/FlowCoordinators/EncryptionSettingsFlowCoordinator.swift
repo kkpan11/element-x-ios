@@ -1,7 +1,8 @@
 //
-// Copyright 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2024-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -17,6 +18,7 @@ enum EncryptionSettingsFlowCoordinatorAction: Equatable {
 struct EncryptionSettingsFlowCoordinatorParameters {
     let userSession: UserSessionProtocol
     let appSettings: AppSettings
+    let appHooks: AppHooks
     let userIndicatorController: UserIndicatorControllerProtocol
     let navigationStackCoordinator: NavigationStackCoordinator
 }
@@ -24,6 +26,7 @@ struct EncryptionSettingsFlowCoordinatorParameters {
 class EncryptionSettingsFlowCoordinator: FlowCoordinatorProtocol {
     private let userSession: UserSessionProtocol
     private let appSettings: AppSettings
+    private let appHooks: AppHooks
     private let userIndicatorController: UserIndicatorControllerProtocol
     private let navigationStackCoordinator: NavigationStackCoordinator
     
@@ -64,6 +67,7 @@ class EncryptionSettingsFlowCoordinator: FlowCoordinatorProtocol {
     init(parameters: EncryptionSettingsFlowCoordinatorParameters) {
         userSession = parameters.userSession
         appSettings = parameters.appSettings
+        appHooks = parameters.appHooks
         userIndicatorController = parameters.userIndicatorController
         navigationStackCoordinator = parameters.navigationStackCoordinator
         
@@ -71,18 +75,21 @@ class EncryptionSettingsFlowCoordinator: FlowCoordinatorProtocol {
         configureStateMachine()
     }
     
-    func start() {
+    func start(animated: Bool) {
         stateMachine.tryEvent(.start)
     }
     
     func handleAppRoute(_ appRoute: AppRoute, animated: Bool) {
+        MXLog.info("Handling app route: \(appRoute)")
+        
         switch appRoute {
-        case .accountProvisioningLink:
-            break // We always ignore this flow when logged in.
+        case .accountProvisioningLink, .oAuthCallback:
+            break // We always ignore these flows when logged in.
         case .roomList, .room, .roomAlias, .childRoom, .childRoomAlias,
-             .roomDetails, .roomMemberDetails, .userProfile,
+             .roomDetails, .roomMemberDetails, .userProfile, .thread,
              .event, .eventOnRoomAlias, .childEvent, .childEventOnRoomAlias,
-             .call, .genericCallLink, .settings, .share:
+             .call, .settings, .share, .transferOwnership,
+             .search:
             // These routes aren't in this flow so clear the entire stack.
             clearRoute(animated: animated)
         case .chatBackupSettings:
@@ -154,9 +161,11 @@ class EncryptionSettingsFlowCoordinator: FlowCoordinatorProtocol {
     
     private func presentRecoveryKeyScreen() {
         let sheetNavigationStackCoordinator = NavigationStackCoordinator()
-        let coordinator = SecureBackupRecoveryKeyScreenCoordinator(parameters: .init(secureBackupController: userSession.clientProxy.secureBackupController,
-                                                                                     userIndicatorController: userIndicatorController,
-                                                                                     isModallyPresented: true))
+        let parameters = SecureBackupRecoveryKeyScreenCoordinatorParameters(secureBackupController: userSession.clientProxy.secureBackupController,
+                                                                            userIndicatorController: userIndicatorController,
+                                                                            isModallyPresented: true)
+        let coordinator = appHooks.recoveryKeyScreenHook.makeCoordinator(parameters: parameters,
+                                                                         homeserver: userSession.clientProxy.homeserver)
         
         coordinator.actions.sink { [weak self] action in
             guard let self else { return }

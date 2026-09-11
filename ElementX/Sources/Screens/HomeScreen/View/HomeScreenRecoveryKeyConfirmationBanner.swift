@@ -1,7 +1,8 @@
 //
-// Copyright 2023, 2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2023-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -20,21 +21,21 @@ struct HomeScreenRecoveryKeyConfirmationBanner: View {
         case .recoveryOutOfSync: L10n.confirmRecoveryKeyBannerTitle
         }
     }
-
+    
     var message: String {
         switch state {
         case .setUpRecovery: L10n.bannerSetUpRecoveryContent
         case .recoveryOutOfSync: L10n.confirmRecoveryKeyBannerMessage
         }
     }
-
+    
     var actionTitle: String {
         switch state {
         case .setUpRecovery: L10n.bannerSetUpRecoverySubmit
         case .recoveryOutOfSync: L10n.confirmRecoveryKeyBannerPrimaryButtonTitle
         }
     }
-
+    
     var primaryAction: HomeScreenViewAction {
         switch state {
         case .setUpRecovery: .setupRecovery
@@ -55,7 +56,7 @@ struct HomeScreenRecoveryKeyConfirmationBanner: View {
     
     var content: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 16) {
+            HStack(alignment: .center, spacing: 16) {
                 Text(title)
                     .font(.compound.bodyLGSemibold)
                     .foregroundColor(.compound.textPrimary)
@@ -65,9 +66,8 @@ struct HomeScreenRecoveryKeyConfirmationBanner: View {
                     Button {
                         context.send(viewAction: .skipRecoveryKeyConfirmation)
                     } label: {
-                        Image(systemName: "xmark")
+                        CompoundIcon(\.close, size: .medium, relativeTo: .compound.bodyLGSemibold)
                             .foregroundColor(.compound.iconSecondary)
-                            .frame(width: 12, height: 12)
                     }
                 }
             }
@@ -122,9 +122,10 @@ struct HomeScreenRecoveryKeyConfirmationBanner_Previews: PreviewProvider, Testab
         
         return HomeScreenViewModel(userSession: userSession,
                                    selectedRoomPublisher: CurrentValueSubject<String?, Never>(nil).asCurrentValuePublisher(),
-                                   appSettings: ServiceLocator.shared.settings,
-                                   analyticsService: ServiceLocator.shared.analytics,
+                                   appSettings: .volatile(),
+                                   analyticsService: AnalyticsServiceMock(.init()),
+                                   bugReportService: BugReportServiceMock(.init()),
                                    notificationManager: NotificationManagerMock(),
-                                   userIndicatorController: ServiceLocator.shared.userIndicatorController)
+                                   userIndicatorController: UserIndicatorControllerMock())
     }
 }

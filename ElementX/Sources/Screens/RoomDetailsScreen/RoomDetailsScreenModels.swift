@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -17,16 +18,18 @@ enum RoomDetailsScreenViewModelAction: Equatable {
     case requestMemberDetailsPresentation
     case requestRecipientDetailsPresentation(userID: String)
     case requestInvitePeoplePresentation
+    case requestInviteToNewRoomPresentation(selectedInvitee: UserProfile)
     case leftRoom
     case requestEditDetailsPresentation
     case requestPollsHistoryPresentation
     case requestRolesAndPermissionsPresentation
-    case startCall
+    case startCall(isVoiceCall: Bool)
     case displayPinnedEventsTimeline
     case displayMediaEventsTimeline
     case displayKnockingRequests
     case displaySecurityAndPrivacy
     case displayReportRoom
+    case transferOwnership
 }
 
 // MARK: View
@@ -42,7 +45,7 @@ struct RoomDetailsScreenViewState: BindableState {
     var isEncrypted: Bool
     var isDirect: Bool
     var permalink: URL?
-
+    
     var topic: AttributedString?
     var topicSummary: AttributedString?
     
@@ -55,44 +58,49 @@ struct RoomDetailsScreenViewState: BindableState {
     var canEditRoomTopic = false
     var canEditRoomAvatar = false
     var canEditRolesOrPermissions = false
+    var canEditSecurityAndPrivacy = false
     var canKickUsers = false
     var canBanUsers = false
     var notificationSettingsState: RoomDetailsNotificationSettingsState = .loading
+    var isCallingEnabled = true
     var canJoinCall = false
     var pinnedEventsActionState = RoomDetailsScreenPinnedEventsActionState.loading
     
-    var knockingEnabled = false
     var isKnockableRoom = false
     var knockRequestsCount = 0
     
     var reportRoomEnabled = false
     
     var canSeeKnockingRequests: Bool {
-        knockingEnabled && dmRecipientInfo == nil && isKnockableRoom && (canInviteUsers || canKickUsers || canBanUsers)
+        dmRecipientInfo == nil && isKnockableRoom && (canInviteUsers || canKickUsers || canBanUsers)
     }
     
     var canSeeSecurityAndPrivacy: Bool {
-        knockingEnabled && dmRecipientInfo == nil && canEditRolesOrPermissions
+        dmRecipientInfo == nil && canEditSecurityAndPrivacy
     }
     
-    var canEdit: Bool {
+    var canEditBaseInfo: Bool {
         !isDirect && (canEditRoomName || canEditRoomTopic || canEditRoomAvatar)
     }
     
     var hasTopicSection: Bool {
         topic != nil || canEditRoomTopic
     }
-
+    
     var bindings: RoomDetailsScreenViewStateBindings
-
+    
     var dmRecipientInfo: DMRecipientInfo?
     var accountOwner: RoomMemberDetails?
     
     var shortcuts: [RoomDetailsScreenViewShortcut] {
         var shortcuts: [RoomDetailsScreenViewShortcut] = [.mute]
-        if !ProcessInfo.processInfo.isiOSAppOnMac, canJoinCall {
-            shortcuts.append(.call)
+        if !ProcessInfo.processInfo.isiOSAppOnMac, isCallingEnabled, canJoinCall {
+            if isDirect {
+                shortcuts.append(.voiceCall)
+            }
+            shortcuts.append(.videoCall)
         }
+        // The invite flow is different for DMs
         if dmRecipientInfo == nil, canInviteUsers {
             shortcuts.append(.invite)
         }
@@ -128,31 +136,31 @@ struct RoomDetailsScreenViewStateBindings {
             case ignore
             case unignore
         }
-
+        
         let action: Action
         let cancelTitle = L10n.actionCancel
-
+        
         var title: String {
             switch action {
             case .ignore: return L10n.screenDmDetailsBlockUser
             case .unignore: return L10n.screenDmDetailsUnblockUser
             }
         }
-
+        
         var confirmationTitle: String {
             switch action {
             case .ignore: return L10n.screenDmDetailsBlockAlertAction
             case .unignore: return L10n.screenDmDetailsUnblockAlertAction
             }
         }
-
+        
         var description: String {
             switch action {
             case .ignore: return L10n.screenDmDetailsBlockAlertDescription
             case .unignore: return L10n.screenDmDetailsUnblockAlertDescription
             }
         }
-
+        
         var viewAction: RoomDetailsScreenViewAction {
             switch action {
             case .ignore: return .ignoreConfirmed
@@ -162,7 +170,7 @@ struct RoomDetailsScreenViewStateBindings {
     }
     
     var isFavourite = false
-
+    
     /// Information describing the currently displayed alert.
     var alertInfo: AlertInfo<RoomDetailsScreenErrorType>?
     var leaveRoomAlertItem: LeaveRoomAlertItem?
@@ -170,6 +178,9 @@ struct RoomDetailsScreenViewStateBindings {
     
     /// A media item that will be previewed with QuickLook.
     var mediaPreviewItem: MediaPreviewItem?
+    
+    /// The view model used to display the leave space sheet, will only be used if the room is a space.
+    var leaveSpaceViewModel: LeaveSpaceViewModel?
 }
 
 struct LeaveRoomAlertItem: AlertProtocol {
@@ -178,7 +189,7 @@ struct LeaveRoomAlertItem: AlertProtocol {
         case `public`
         case `private`
     }
-
+    
     let roomID: String
     let isDM: Bool
     let state: RoomState
@@ -188,7 +199,7 @@ struct LeaveRoomAlertItem: AlertProtocol {
     var title: String {
         isDM ? L10n.actionLeaveConversation : L10n.actionLeaveRoom
     }
-
+    
     var subtitle: String {
         switch state {
         case .empty: return L10n.leaveRoomAlertEmptySubtitle
@@ -217,7 +228,7 @@ enum RoomDetailsScreenViewAction {
     case toggleFavourite(isFavourite: Bool)
     case processTapRolesAndPermissions
     case processTapSecurityAndPrivacy
-    case processTapCall
+    case processTapCall(isVoiceCall: Bool)
     case processTapPinnedEvents
     case processTapMediaEvents
     case processTapRequestsToJoin
@@ -227,7 +238,8 @@ enum RoomDetailsScreenViewAction {
 enum RoomDetailsScreenViewShortcut {
     case share(link: URL)
     case mute
-    case call
+    case videoCall
+    case voiceCall
     case invite
 }
 
@@ -288,6 +300,8 @@ enum RoomDetailsScreenErrorType: Hashable {
     case alert
     /// Leaving room has failed..
     case unknown
+    /// Last owner
+    case lastOwner
 }
 
 enum RoomDetailsScreenPinnedEventsActionState {

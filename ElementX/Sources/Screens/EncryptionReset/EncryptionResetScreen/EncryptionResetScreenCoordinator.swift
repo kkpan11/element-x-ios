@@ -1,7 +1,8 @@
 //
-// Copyright 2022-2024 New Vector Ltd.
+// Copyright 2025 Element Creations Ltd.
+// Copyright 2022-2025 New Vector Ltd.
 //
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial.
 // Please see LICENSE files in the repository root for full details.
 //
 
@@ -9,7 +10,7 @@ import Combine
 import SwiftUI
 
 enum EncryptionResetScreenCoordinatorAction {
-    case requestOIDCAuthorisation(URL)
+    case requestOAuthAuthorisation(URL)
     case requestPassword(passwordPublisher: PassthroughSubject<String, Never>)
     case resetFinished
     case cancel
@@ -21,18 +22,16 @@ struct EncryptionResetScreenCoordinatorParameters {
 }
 
 final class EncryptionResetScreenCoordinator: CoordinatorProtocol {
-    private let parameters: EncryptionResetScreenCoordinatorParameters
     private let viewModel: EncryptionResetScreenViewModelProtocol
     
     private var cancellables = Set<AnyCancellable>()
- 
+    
     private let actionsSubject: PassthroughSubject<EncryptionResetScreenCoordinatorAction, Never> = .init()
     var actionsPublisher: AnyPublisher<EncryptionResetScreenCoordinatorAction, Never> {
         actionsSubject.eraseToAnyPublisher()
     }
     
     init(parameters: EncryptionResetScreenCoordinatorParameters) {
-        self.parameters = parameters
         viewModel = EncryptionResetScreenViewModel(clientProxy: parameters.clientProxy,
                                                    userIndicatorController: parameters.userIndicatorController)
     }
@@ -43,8 +42,8 @@ final class EncryptionResetScreenCoordinator: CoordinatorProtocol {
             
             guard let self else { return }
             switch action {
-            case .requestOIDCAuthorisation(let url):
-                self.actionsSubject.send(.requestOIDCAuthorisation(url))
+            case .requestOAuthAuthorisation(let url):
+                self.actionsSubject.send(.requestOAuthAuthorisation(url))
             case .requestPassword(let passwordPublisher):
                 self.actionsSubject.send(.requestPassword(passwordPublisher: passwordPublisher))
             case .resetFinished:
@@ -59,7 +58,7 @@ final class EncryptionResetScreenCoordinator: CoordinatorProtocol {
     func stop() {
         viewModel.stop()
     }
-        
+    
     func toPresentable() -> AnyView {
         AnyView(EncryptionResetScreen(context: viewModel.context))
     }
